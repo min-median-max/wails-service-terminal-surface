@@ -2,4 +2,4 @@ module github.com/min-median-max/wails-service-terminal-surface
 
 go 1.26.3
 
-require github.com/min-median-max/wails-service-native-compositor v0.0.0-20260822033405-3530617b540f // indirect
+require github.com/min-median-max/wails-service-native-compositor v0.0.0-20260822033405-3530617b540f
