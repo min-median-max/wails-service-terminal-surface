@@ -207,17 +207,6 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	if token != "" {
 		open["observerToken"] = token
 	}
-	// The engine subscribes its prepared stream before the shell exists, so the
-	// first byte the pty emits already has its reader (the kit's own order).
-	if !warm && token != "" {
-		if _, err := sessions.links.send(parsed.engineUnit, "terminal.ensureSession", map[string]any{
-			"window": parsed.window, "pane": parsed.pane,
-			"cols": placeholderCols, "rows": placeholderRows, "observerToken": token,
-		}); err != nil {
-			return err
-		}
-	}
-
 	opened, err := sessions.links.send(parsed.ptyUnit, "pty.open", open)
 	if err != nil {
 		return err
@@ -230,6 +219,17 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	record.session = session
 	record.phase = "opened"
 	sessions.mu.Unlock()
+
+	// ensure follows the open: the engine's subscribe waits for the OPENED
+	// frame, and that frame exists only once the pty opened the session.
+	if !warm && token != "" {
+		if _, err := sessions.links.send(parsed.engineUnit, "terminal.ensureSession", map[string]any{
+			"window": parsed.window, "pane": parsed.pane,
+			"cols": placeholderCols, "rows": placeholderRows, "observerToken": token,
+		}); err != nil {
+			return err
+		}
+	}
 
 	// The ring the sidecar sends during surface.open must find its pane bound
 	// already — a ring for an unbound pane is refused by name.
