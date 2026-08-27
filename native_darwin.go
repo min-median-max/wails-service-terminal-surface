@@ -16,7 +16,7 @@ import (
 )
 
 // NewBackend wires the AppKit driver.
-func NewBackend() (*Backend, error) { return newBackend(appKitDriver{}), nil }
+func NewBackend() *Backend { return newBackend(appKitDriver{}) }
 
 type appKitDriver struct{}
 

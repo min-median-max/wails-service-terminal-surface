@@ -7,11 +7,11 @@ import (
 	"unsafe"
 )
 
-// NewBackend fails by name off darwin: a nil driver would report a pane as placed and leave it
-// blank, which reads as a broken plugin rather than a platform this build does not cover.
-func NewBackend() (*Backend, error) {
-	return nil, fmt.Errorf("terminal surfaces have no driver on this platform")
-}
+// NewBackend wires the driver that fails by name: off darwin every operation refuses rather than
+// reporting a pane as placed and leaving it blank, which would read as a broken plugin instead of
+// a platform this build does not cover. The constructor itself cannot fail — the host builds its
+// kind map unconditionally, the way the webview backend is built.
+func NewBackend() *Backend { return newBackend(unsupportedDriver{}) }
 
 type unsupportedDriver struct{}
 
