@@ -231,6 +231,11 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	record.phase = "opened"
 	sessions.mu.Unlock()
 
+	// The ring the sidecar sends during surface.open must find its pane bound
+	// already — a ring for an unbound pane is refused by name.
+	if sessions.binder != nil {
+		sessions.binder.Bind(parsed.pane, parsed.engineUnit)
+	}
 	surface, err := sessions.links.send(parsed.engineUnit, "surface.open", map[string]any{
 		"identifier": sessions.identifier,
 		"window":     parsed.window, "pane": parsed.pane,
@@ -241,9 +246,6 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	})
 	if err != nil {
 		return err
-	}
-	if sessions.binder != nil {
-		sessions.binder.Bind(parsed.pane, parsed.engineUnit)
 	}
 	cols, okCols := asUint(surface["cols"])
 	rows, okRows := asUint(surface["rows"])
