@@ -10,6 +10,13 @@
 @end
 
 @implementation SoksakTerminalHostView
+// Clicks fall through to the webview document beneath: focus and pointer
+// gestures live in the DOM until the native input layer exists.
+- (NSView *)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
+}
+
 - (BOOL)isFlipped { return NO; }
 @end
 
