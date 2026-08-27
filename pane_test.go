@@ -93,12 +93,12 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 	equalSequence(t, links.sequence(), []string{
 		"soksak-sidecar-terminal-alacritty:terminal.rehydrate",
 		"soksak-sidecar-terminal-alacritty:terminal.prepareSession",
-		"soksak-sidecar-pty:pty.open",
 		"soksak-sidecar-terminal-alacritty:terminal.ensureSession",
+		"soksak-sidecar-pty:pty.open",
 		"soksak-sidecar-terminal-alacritty:surface.open",
 		"soksak-sidecar-pty:pty.resize",
 	})
-	open := links.calls[2].request
+	open := links.calls[3].request
 	if open["observerToken"] != "tok-1" {
 		t.Fatalf("pty.open carries no observer token: %v", open)
 	}
