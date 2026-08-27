@@ -189,3 +189,36 @@ func lastActions(driver *recordingDriver) []nativeAction {
 	}
 	return actions
 }
+
+type recordingChannel struct {
+	binds   []string
+	unbinds []string
+}
+
+func (channel *recordingChannel) BindView(pane string, _ unsafe.Pointer) {
+	channel.binds = append(channel.binds, pane)
+}
+
+func (channel *recordingChannel) UnbindView(pane string) {
+	channel.unbinds = append(channel.unbinds, pane)
+}
+
+func TestApplyBindsThePaneViewToTheChannel(t *testing.T) {
+	driver := &recordingDriver{}
+	backend := newBackend(driver)
+	channel := &recordingChannel{}
+	backend.UseChannel(channel)
+	window := unsafe.Pointer(new(byte))
+	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("s1", 7))); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(channel.binds) != 1 || channel.binds[0] != "tab-abc123.1" {
+		t.Fatalf("the created pane did not bind its view: %v", channel.binds)
+	}
+	if _, err := backend.Apply(window, snapshotOf(2)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(channel.unbinds) != 1 || channel.unbinds[0] != "tab-abc123.1" {
+		t.Fatalf("the removed pane did not unbind: %v", channel.unbinds)
+	}
+}

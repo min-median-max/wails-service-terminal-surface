@@ -53,15 +53,28 @@ type nativeOwner struct {
 	surface    compositor.Surface
 }
 
+// paneChannel is what the surface channel offers the inventory: a pane's host
+// view binds when its owner appears and unbinds when the owner goes. The ring
+// and its surfaces stay the sidecar's either way.
+type paneChannel interface {
+	BindView(pane string, view unsafe.Pointer)
+	UnbindView(pane string)
+}
+
 // Backend is the terminal surface kind.
 type Backend struct {
-	driver nativeDriver
-	owners map[string]nativeOwner
+	driver  nativeDriver
+	owners  map[string]nativeOwner
+	channel paneChannel
 }
 
 func newBackend(driver nativeDriver) *Backend {
 	return &Backend{driver: driver, owners: make(map[string]nativeOwner)}
 }
+
+// UseChannel connects the surface channel. Without one the inventory still
+// reconciles — the pane just has no pixels yet.
+func (backend *Backend) UseChannel(channel paneChannel) { backend.channel = channel }
 
 // Apply reconciles one window's declared terminal surfaces against the owners this backend holds.
 // The whole inventory arrives every commit, so what is absent is removed, what is new is created,
@@ -87,6 +100,22 @@ func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapsho
 		for _, operation := range operations {
 			if operation.action == nativeRemove {
 				delete(backend.owners, operation.surface.ID)
+			}
+		}
+		if backend.channel != nil {
+			for _, operation := range operations {
+				pane := operation.surface.Source["pane"]
+				if pane == "" {
+					continue
+				}
+				switch operation.action {
+				case nativeCreate:
+					if owner, held := backend.owners[operation.surface.ID]; held {
+						backend.channel.BindView(pane, owner.native)
+					}
+				case nativeRemove:
+					backend.channel.UnbindView(pane)
+				}
 			}
 		}
 	} else {
