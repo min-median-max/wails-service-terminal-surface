@@ -55,10 +55,22 @@ type nativeOwner struct {
 
 // paneChannel is what the surface channel offers the inventory: a pane's host
 // view binds when its owner appears and unbinds when the owner goes. The ring
-// and its surfaces stay the sidecar's either way.
+// and its surfaces stay the sidecar's either way. The parking picture reads
+// the displayed surface's own pixels from here.
 type paneChannel interface {
 	BindView(pane string, view unsafe.Pointer)
 	UnbindView(pane string)
+	SnapshotPNG(pane string) ([]byte, error)
+}
+
+// paneVerbs is the session layer behind the delivered verbs: input, reading,
+// forwarded surface commands, held numbers and the stop path.
+type paneVerbs interface {
+	Input(pane, data string) error
+	Read(pane string, lines int) (string, error)
+	Forward(pane, command string, request map[string]any) (map[string]any, error)
+	State(pane string) (map[string]any, error)
+	Stop(pane, intent string) error
 }
 
 // Backend is the terminal surface kind.
@@ -66,6 +78,8 @@ type Backend struct {
 	driver  nativeDriver
 	owners  map[string]nativeOwner
 	channel paneChannel
+	verbs   paneVerbs
+	onPane  func(created bool, source compositor.SurfaceSource)
 }
 
 func newBackend(driver nativeDriver) *Backend {
@@ -75,6 +89,16 @@ func newBackend(driver nativeDriver) *Backend {
 // UseChannel connects the surface channel. Without one the inventory still
 // reconciles — the pane just has no pixels yet.
 func (backend *Backend) UseChannel(channel paneChannel) { backend.channel = channel }
+
+// UseSessions connects the pane session layer behind the delivered verbs.
+func (backend *Backend) UseSessions(verbs paneVerbs) { backend.verbs = verbs }
+
+// ObservePanes reports a pane's declaration appearing or going, with its
+// source. The host runs the session opening off this — never on this path,
+// which is the commit path.
+func (backend *Backend) ObservePanes(observe func(created bool, source compositor.SurfaceSource)) {
+	backend.onPane = observe
+}
 
 // Apply reconciles one window's declared terminal surfaces against the owners this backend holds.
 // The whole inventory arrives every commit, so what is absent is removed, what is new is created,
@@ -102,19 +126,27 @@ func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapsho
 				delete(backend.owners, operation.surface.ID)
 			}
 		}
-		if backend.channel != nil {
-			for _, operation := range operations {
-				pane := operation.surface.Source["pane"]
-				if pane == "" {
-					continue
-				}
-				switch operation.action {
-				case nativeCreate:
+		for _, operation := range operations {
+			pane := operation.surface.Source["pane"]
+			if pane == "" {
+				continue
+			}
+			switch operation.action {
+			case nativeCreate:
+				if backend.channel != nil {
 					if owner, held := backend.owners[operation.surface.ID]; held {
 						backend.channel.BindView(pane, owner.native)
 					}
-				case nativeRemove:
+				}
+				if backend.onPane != nil {
+					backend.onPane(true, operation.surface.Source)
+				}
+			case nativeRemove:
+				if backend.channel != nil {
 					backend.channel.UnbindView(pane)
+				}
+				if backend.onPane != nil {
+					backend.onPane(false, operation.surface.Source)
 				}
 			}
 		}
@@ -149,8 +181,19 @@ func (backend *Backend) Deliver(id string, message map[string]any) (map[string]a
 		return nil, fmt.Errorf("terminal surface %s is not applied", id)
 	}
 	verb, _ := message["verb"].(string)
+	pane := owner.surface.Source["pane"]
 	switch verb {
 	case "snapshot":
+		// The displayed IOSurface is the truthful picture; without a ring the
+		// driver answers, and off darwin that answer is a named refusal.
+		if backend.channel != nil {
+			if pixels, err := backend.channel.SnapshotPNG(pane); err == nil {
+				return map[string]any{
+					"png":   base64.StdEncoding.EncodeToString(pixels),
+					"bytes": len(pixels),
+				}, nil
+			}
+		}
 		pixels, err := backend.driver.readPixels(owner.native)
 		if err != nil {
 			return nil, err
@@ -161,6 +204,43 @@ func (backend *Backend) Deliver(id string, message map[string]any) (map[string]a
 		}, nil
 	case "focus":
 		if err := backend.driver.focus(owner.native); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, nil
+	}
+	if backend.verbs == nil {
+		return nil, fmt.Errorf("terminal surface verb %q has no session layer; the host wired none", verb)
+	}
+	switch verb {
+	case "input":
+		data, _ := message["data"].(string)
+		if err := backend.verbs.Input(pane, data); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, nil
+	case "read":
+		lines := 0
+		if number, isNumber := message["lines"].(float64); isNumber && number > 0 {
+			lines = int(number)
+		}
+		text, err := backend.verbs.Read(pane, lines)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"text": text}, nil
+	case "scroll", "theme", "selection":
+		request := make(map[string]any, len(message))
+		for key, value := range message {
+			if key != "verb" {
+				request[key] = value
+			}
+		}
+		return backend.verbs.Forward(pane, "surface."+verb, request)
+	case "state":
+		return backend.verbs.State(pane)
+	case "stop":
+		intent, _ := message["intent"].(string)
+		if err := backend.verbs.Stop(pane, intent); err != nil {
 			return nil, err
 		}
 		return map[string]any{}, nil

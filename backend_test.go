@@ -193,6 +193,7 @@ func lastActions(driver *recordingDriver) []nativeAction {
 type recordingChannel struct {
 	binds   []string
 	unbinds []string
+	png     []byte
 }
 
 func (channel *recordingChannel) BindView(pane string, _ unsafe.Pointer) {
@@ -201,6 +202,13 @@ func (channel *recordingChannel) BindView(pane string, _ unsafe.Pointer) {
 
 func (channel *recordingChannel) UnbindView(pane string) {
 	channel.unbinds = append(channel.unbinds, pane)
+}
+
+func (channel *recordingChannel) SnapshotPNG(string) ([]byte, error) {
+	if channel.png == nil {
+		return nil, refusal("no ring is displayed")
+	}
+	return channel.png, nil
 }
 
 func TestApplyBindsThePaneViewToTheChannel(t *testing.T) {
@@ -220,5 +228,141 @@ func TestApplyBindsThePaneViewToTheChannel(t *testing.T) {
 	}
 	if len(channel.unbinds) != 1 || channel.unbinds[0] != "tab-abc123.1" {
 		t.Fatalf("the removed pane did not unbind: %v", channel.unbinds)
+	}
+}
+
+
+type recordingVerbs struct {
+	inputs   []string
+	stops    []string
+	forwards []string
+}
+
+func (verbs *recordingVerbs) Input(pane, data string) error {
+	verbs.inputs = append(verbs.inputs, pane+":"+data)
+	return nil
+}
+
+func (verbs *recordingVerbs) Read(string, int) (string, error) { return "text\n", nil }
+
+func (verbs *recordingVerbs) Forward(pane, command string, _ map[string]any) (map[string]any, error) {
+	verbs.forwards = append(verbs.forwards, pane+":"+command)
+	return map[string]any{"offset": 1}, nil
+}
+
+func (verbs *recordingVerbs) State(string) (map[string]any, error) {
+	return map[string]any{"phase": "live"}, nil
+}
+
+func (verbs *recordingVerbs) Stop(pane, intent string) error {
+	verbs.stops = append(verbs.stops, pane+":"+intent)
+	return nil
+}
+
+func appliedBackend(t *testing.T) (*Backend, *recordingDriver, *recordingVerbs) {
+	t.Helper()
+	driver := &recordingDriver{}
+	backend := newBackend(driver)
+	verbs := &recordingVerbs{}
+	backend.UseSessions(verbs)
+	window := unsafe.Pointer(new(byte))
+	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("terminal-1", 1))); err != nil {
+		t.Fatal(err)
+	}
+	return backend, driver, verbs
+}
+
+func TestDeliverInputReachesTheSessionLayer(t *testing.T) {
+	backend, _, verbs := appliedBackend(t)
+	if _, err := backend.Deliver("terminal-1", map[string]any{"verb": "input", "data": "ls\r"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(verbs.inputs) != 1 || verbs.inputs[0] != "tab-abc123.1:ls\r" {
+		t.Fatalf("input did not reach the sessions: %v", verbs.inputs)
+	}
+}
+
+func TestDeliverScrollForwardsTheSurfaceCommand(t *testing.T) {
+	backend, _, verbs := appliedBackend(t)
+	answer, err := backend.Deliver("terminal-1", map[string]any{"verb": "scroll", "lines": 3.0})
+	if err != nil || answer["offset"] != 1 {
+		t.Fatalf("scroll answered %v, %v", answer, err)
+	}
+	if len(verbs.forwards) != 1 || verbs.forwards[0] != "tab-abc123.1:surface.scroll" {
+		t.Fatalf("scroll did not forward: %v", verbs.forwards)
+	}
+}
+
+func TestDeliverStateAndReadAnswer(t *testing.T) {
+	backend, _, _ := appliedBackend(t)
+	state, err := backend.Deliver("terminal-1", map[string]any{"verb": "state"})
+	if err != nil || state["phase"] != "live" {
+		t.Fatalf("state answered %v, %v", state, err)
+	}
+	read, err := backend.Deliver("terminal-1", map[string]any{"verb": "read", "lines": 4.0})
+	if err != nil || read["text"] != "text\n" {
+		t.Fatalf("read answered %v, %v", read, err)
+	}
+}
+
+func TestDeliverStopCarriesTheIntent(t *testing.T) {
+	backend, _, verbs := appliedBackend(t)
+	if _, err := backend.Deliver("terminal-1", map[string]any{"verb": "stop", "intent": "close"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(verbs.stops) != 1 || verbs.stops[0] != "tab-abc123.1:close" {
+		t.Fatalf("stop did not carry the intent: %v", verbs.stops)
+	}
+}
+
+func TestDeliverWithoutSessionsRefusesByName(t *testing.T) {
+	driver := &recordingDriver{}
+	backend := newBackend(driver)
+	window := unsafe.Pointer(new(byte))
+	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("terminal-1", 1))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Deliver("terminal-1", map[string]any{"verb": "input", "data": "x"}); err == nil ||
+		!strings.Contains(err.Error(), "input") {
+		t.Fatalf("a missing session layer was not refused by name: %v", err)
+	}
+}
+
+func TestSnapshotPrefersTheDisplayedSurface(t *testing.T) {
+	backend, _, _ := appliedBackend(t)
+	channel := &recordingChannel{png: []byte("PNGBYTES")}
+	backend.UseChannel(channel)
+	answer, err := backend.Deliver("terminal-1", map[string]any{"verb": "snapshot"})
+	if err != nil || answer["bytes"] != 8 {
+		t.Fatalf("snapshot answered %v, %v", answer, err)
+	}
+}
+
+func TestSnapshotFallsBackWhenNoRingIsDisplayed(t *testing.T) {
+	backend, driver, _ := appliedBackend(t)
+	backend.UseChannel(&recordingChannel{})
+	driver.pixels = []byte("fallback")
+	answer, err := backend.Deliver("terminal-1", map[string]any{"verb": "snapshot"})
+	if err != nil || answer["bytes"] != 8 {
+		t.Fatalf("snapshot did not fall back to the driver: %v, %v", answer, err)
+	}
+}
+
+func TestObservePanesSeesCreateAndRemove(t *testing.T) {
+	driver := &recordingDriver{}
+	backend := newBackend(driver)
+	var events []string
+	backend.ObservePanes(func(created bool, source compositor.SurfaceSource) {
+		events = append(events, source["pane"]+":"+map[bool]string{true: "created", false: "removed"}[created])
+	})
+	window := unsafe.Pointer(new(byte))
+	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("terminal-1", 1))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Apply(window, snapshotOf(2)); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0] != "tab-abc123.1:created" || events[1] != "tab-abc123.1:removed" {
+		t.Fatalf("pane observation saw %v", events)
 	}
 }
