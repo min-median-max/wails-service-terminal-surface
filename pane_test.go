@@ -231,3 +231,32 @@ func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 		t.Fatalf("a missing shell was not refused by name: %v", err)
 	}
 }
+
+// A declared pixel change asks the engine for the new grid and resizes the pty
+// to it; the pane record keeps the answered cell counts.
+func TestResizeAsksTheEngineThenResizesThePty(t *testing.T) {
+	links := newFakeLinks()
+	sessions := NewSessions("com.soksak.test", links.asLinks())
+	if err := sessions.Start(paneSourceMap()); err != nil {
+		t.Fatal(err)
+	}
+	links.answers["surface.resize"] = map[string]any{"cols": float64(120), "rows": float64(40)}
+	links.calls = nil
+
+	if err := sessions.Resize("tab-abc123.1", 960, 720, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	sequence := links.sequence()
+	want := []string{
+		"soksak-sidecar-terminal-alacritty:surface.resize",
+		"soksak-sidecar-pty:pty.resize",
+	}
+	if len(sequence) != len(want) || sequence[0] != want[0] || sequence[1] != want[1] {
+		t.Fatalf("resize sequence = %v, want %v", sequence, want)
+	}
+	resize := links.calls[1].request
+	if resize["cols"] != uint64(120) || resize["rows"] != uint64(40) {
+		t.Fatalf("pty.resize carried %v, want the engine's 120x40", resize)
+	}
+}

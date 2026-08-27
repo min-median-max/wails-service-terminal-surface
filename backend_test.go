@@ -1,6 +1,7 @@
 package terminalsurface
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unsafe"
@@ -233,6 +234,7 @@ func TestApplyBindsThePaneViewToTheChannel(t *testing.T) {
 
 
 type recordingVerbs struct {
+	resizes  []string
 	inputs   []string
 	stops    []string
 	forwards []string
@@ -252,6 +254,11 @@ func (verbs *recordingVerbs) Forward(pane, command string, _ map[string]any) (ma
 
 func (verbs *recordingVerbs) State(string) (map[string]any, error) {
 	return map[string]any{"phase": "live"}, nil
+}
+
+func (verbs *recordingVerbs) Resize(pane string, pixelW, pixelH, scale float64) error {
+	verbs.resizes = append(verbs.resizes, fmt.Sprintf("%s:%gx%g@%g", pane, pixelW, pixelH, scale))
+	return nil
 }
 
 func (verbs *recordingVerbs) Stop(pane, intent string) error {
@@ -364,5 +371,18 @@ func TestObservePanesSeesCreateAndRemove(t *testing.T) {
 	}
 	if len(events) != 2 || events[0] != "tab-abc123.1:created" || events[1] != "tab-abc123.1:removed" {
 		t.Fatalf("pane observation saw %v", events)
+	}
+}
+
+// A resize verb with the pane's new pixel box reaches the session layer.
+func TestDeliverResizeReachesTheSessionLayer(t *testing.T) {
+	backend, _, verbs := appliedBackend(t)
+	if _, err := backend.Deliver("terminal-1", map[string]any{
+		"verb": "resize", "pixelW": 960.0, "pixelH": 720.0, "scale": 2.0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(verbs.resizes) != 1 || verbs.resizes[0] != "tab-abc123.1:960x720@2" {
+		t.Fatalf("resize did not reach the sessions: %v", verbs.resizes)
 	}
 }
