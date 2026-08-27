@@ -186,3 +186,52 @@ func TestRingForAnUnboundPaneIsRefused(t *testing.T) {
 		t.Fatalf("no refusal within 3s")
 	}
 }
+
+// The parking picture reads the displayed surface's own pixels: a PNG with the
+// PNG signature, and before any frame a refusal that names the pane.
+func TestSnapshotReadsTheDisplayedSurface(t *testing.T) {
+	identifier := fmt.Sprintf("soksak-surface-snap-%d", os.Getpid())
+	channel, err := OpenChannel(identifier)
+	if err != nil {
+		t.Fatalf("the channel did not open: %v", err)
+	}
+	defer channel.Close()
+	const pane = "tab-snap.1"
+	channel.Bind(pane, "engine-test")
+	if _, err := channel.SnapshotPNG(pane); err == nil || !strings.Contains(err.Error(), pane) {
+		t.Fatalf("a pane without a frame was not refused by name: %v", err)
+	}
+	frames := make(chan uint64, 4)
+	channel.OnFrame = func(_ string, seq uint64) { frames <- seq }
+	name, _ := surfacecontract.ChannelName(identifier)
+	peer := peerLookUp(name)
+	reply := peerMakeReceive()
+	hello, _ := surfacecontract.Encode(&surfacecontract.Hello{SidecarID: "engine-test"})
+	if !peerSend(peer, hello, nil, reply) {
+		t.Fatalf("hello did not send")
+	}
+	rights := make([]uint32, 0, 3)
+	for i := 0; i < 3; i++ {
+		rights = append(rights, peerSurfacePort(peerCreateSurface(32, 16)))
+	}
+	ring, _ := surfacecontract.Encode(&surfacecontract.Ring{Pane: pane, PixelW: 32, PixelH: 16, Scale: 1, CellW: 8, CellH: 16})
+	if !peerSend(peer, ring, rights, 0) {
+		t.Fatalf("ring did not send")
+	}
+	frame, _ := surfacecontract.Encode(&surfacecontract.FrameReady{Pane: pane, RingIndex: 2, Seq: 1})
+	if !peerSend(peer, frame, nil, 0) {
+		t.Fatalf("frameReady did not send")
+	}
+	select {
+	case <-frames:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("no frame within 3s")
+	}
+	png, err := channel.SnapshotPNG(pane)
+	if err != nil {
+		t.Fatalf("the displayed surface did not read: %v", err)
+	}
+	if len(png) < 8 || string(png[1:4]) != "PNG" {
+		t.Fatalf("the picture is not a PNG (%d bytes)", len(png))
+	}
+}

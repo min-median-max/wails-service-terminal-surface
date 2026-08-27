@@ -57,3 +57,7 @@ void *soksakChannelPeerCreateSurface(uint32_t width, uint32_t height);
 uint32_t soksakChannelPeerSurfacePort(void *surface);
 
 #endif
+
+// Encodes the surface's current pixels as one PNG into a malloc'd buffer the
+// caller frees. The surface stays the sidecar's; this only reads.
+int soksakChannelSurfacePNG(void *surface, void **outBytes, size_t *outLen);

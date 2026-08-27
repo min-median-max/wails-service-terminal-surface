@@ -252,3 +252,50 @@ uint32_t soksakChannelPeerSurfacePort(void *surface) {
     }
     return IOSurfaceCreateMachPort((IOSurfaceRef)surface);
 }
+
+int soksakChannelSurfacePNG(void *surface, void **outBytes, size_t *outLen) {
+    if (surface == NULL || outBytes == NULL || outLen == NULL) {
+        return soksakChannelStatusNoSurface;
+    }
+    IOSurfaceRef ioSurface = (IOSurfaceRef)surface;
+    if (IOSurfaceLock(ioSurface, kIOSurfaceLockReadOnly, NULL) != kIOReturnSuccess) {
+        return soksakChannelStatusNoSurface;
+    }
+    int status = soksakChannelStatusNoSurface;
+    CGImageRef image = NULL;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef bitmap = CGBitmapContextCreate(
+        IOSurfaceGetBaseAddress(ioSurface),
+        IOSurfaceGetWidth(ioSurface), IOSurfaceGetHeight(ioSurface), 8,
+        IOSurfaceGetBytesPerRow(ioSurface), colorSpace,
+        kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    if (bitmap != NULL) {
+        image = CGBitmapContextCreateImage(bitmap);
+        CGContextRelease(bitmap);
+    }
+    CGColorSpaceRelease(colorSpace);
+    IOSurfaceUnlock(ioSurface, kIOSurfaceLockReadOnly, NULL);
+    if (image == NULL) {
+        return status;
+    }
+    CFMutableDataRef data = CFDataCreateMutable(NULL, 0);
+    CGImageDestinationRef destination =
+        CGImageDestinationCreateWithData(data, CFSTR("public.png"), 1, NULL);
+    if (destination != NULL) {
+        CGImageDestinationAddImage(destination, image, NULL);
+        if (CGImageDestinationFinalize(destination)) {
+            size_t length = (size_t)CFDataGetLength(data);
+            void *copied = malloc(length);
+            if (copied != NULL) {
+                memcpy(copied, CFDataGetBytePtr(data), length);
+                *outBytes = copied;
+                *outLen = length;
+                status = soksakChannelStatusDone;
+            }
+        }
+        CFRelease(destination);
+    }
+    CFRelease(data);
+    CGImageRelease(image);
+    return status;
+}

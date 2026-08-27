@@ -10,7 +10,7 @@ package terminalsurface
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc -fblocks
-#cgo LDFLAGS: -framework Cocoa -framework QuartzCore -framework IOSurface
+#cgo LDFLAGS: -framework Cocoa -framework QuartzCore -framework IOSurface -framework ImageIO -framework CoreGraphics
 #include <stdlib.h>
 #include "channel_darwin.h"
 */
@@ -136,6 +136,29 @@ func (channel *Channel) PaneState(pane string) (displayed int, seq uint64, held 
 		return -1, 0, false
 	}
 	return ring.displayed, ring.seq, ring.held
+}
+
+// SnapshotPNG reads the displayed surface's pixels as one PNG — the parking
+// picture is the sidecar's own frame, never a guess. A pane that displays
+// nothing yet is refused by name.
+func (channel *Channel) SnapshotPNG(pane string) ([]byte, error) {
+	channel.mu.Lock()
+	ring, bound := channel.panes[pane]
+	var surface unsafe.Pointer
+	if bound && ring.held && ring.displayed >= 0 {
+		surface = ring.surfaces[ring.displayed]
+	}
+	channel.mu.Unlock()
+	if surface == nil {
+		return nil, fmt.Errorf("pane %q displays no surface yet", pane)
+	}
+	var bytes unsafe.Pointer
+	var length C.size_t
+	if status := C.soksakChannelSurfacePNG(surface, &bytes, &length); status != C.soksakChannelStatusDone {
+		return nil, fmt.Errorf("pane %q pixels did not encode: status %d", pane, int(status))
+	}
+	defer C.free(bytes)
+	return C.GoBytes(bytes, C.int(length)), nil
 }
 
 // Close stops the receive loop and releases every held surface reference.
