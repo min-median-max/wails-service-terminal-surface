@@ -223,6 +223,40 @@ func TestStateAnswersWhatTheChannelSaw(t *testing.T) {
 	}
 }
 
+func TestStateMergesTheDeclaredEngineSurfaceState(t *testing.T) {
+	links := newFakeLinks()
+	links.answers["surface.state"] = map[string]any{
+		"pane": "tab-abc123.1", "paints": uint64(12),
+		"cursorRow": uint64(3), "cursorColumn": uint64(7),
+		"cursorVisible": true, "cursorShape": "bar", "cursorBlinking": true,
+		"cursorAnimation": map[string]any{"intervalMs": uint64(750), "phase": "off"},
+	}
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap()); err != nil {
+		t.Fatal(err)
+	}
+	sessions.NoteFrame("tab-abc123.1", 42)
+	before := len(links.calls)
+	state, err := sessions.State("tab-abc123.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := links.calls[before:]
+	if len(calls) != 1 || calls[0].unit != "soksak-sidecar-terminal-alacritty" || calls[0].command != "surface.state" {
+		t.Fatalf("state did not read the declared engine once: %v", calls)
+	}
+	if calls[0].request["window"] != "win-abc123" || calls[0].request["pane"] != "tab-abc123.1" {
+		t.Fatalf("surface.state has the wrong owner key: %v", calls[0].request)
+	}
+	animation, ok := state["cursorAnimation"].(map[string]any)
+	if state["cursorShape"] != "bar" || state["cursorBlinking"] != true || !ok || animation["phase"] != "off" {
+		t.Fatalf("engine cursor state was not published: %v", state)
+	}
+	if state["sequence"] != uint64(42) || state["phase"] != "live" || state["cols"] != uint64(100) {
+		t.Fatalf("service-owned state was not retained: %v", state)
+	}
+}
+
 func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 	source := paneSourceMap()
 	delete(source, "shell")
