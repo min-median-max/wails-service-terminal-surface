@@ -10,15 +10,12 @@
 @end
 
 @implementation SoksakTerminalHostView
-
-// Match the browser native host's AppKit responder contract. Returning nil from hitTest made
-// terminal clicks fall through to WebContent, while the native terminal surface remained above it;
-// the pane could look present but never became the responder that owns input.
-- (BOOL)acceptsFirstResponder { return YES; }
-- (BOOL)acceptsFirstMouse:(NSEvent *)event { (void)event; return YES; }
-- (void)mouseDown:(NSEvent *)event {
-    (void)event;
-    [self.window makeFirstResponder:self];
+// Input is currently owned by the exposed terminal-input node in WebContent. This host paints the
+// IOSurface only; claiming first responder without implementing the complete NSTextInputClient and
+// key/mouse wire consumes input and delivers nothing. Let hit testing reach the declared input owner.
+- (NSView *)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
 }
 
 - (BOOL)isFlipped { return NO; }
