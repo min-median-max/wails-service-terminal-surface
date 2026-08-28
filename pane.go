@@ -397,18 +397,31 @@ func (sessions *Sessions) NoteFrame(pane string, seq uint64) {
 	}
 }
 
-// State answers the numbers this service holds for one pane.
+// State combines the engine's declared surface state with the session and channel state this
+// service owns. Service-owned keys are written last, so an engine cannot replace their meaning.
 func (sessions *Sessions) State(pane string) (map[string]any, error) {
 	record, err := sessions.record(pane)
 	if err != nil {
 		return nil, err
 	}
 	sessions.mu.Lock()
-	defer sessions.mu.Unlock()
-	return map[string]any{
-		"phase": record.phase, "session": record.session,
-		"cols": record.cols, "rows": record.rows, "sequence": record.seq,
-	}, nil
+	window, engineUnit := record.window, record.engineUnit
+	phase, session := record.phase, record.session
+	cols, rows, sequence := record.cols, record.rows, record.seq
+	sessions.mu.Unlock()
+	state, err := sessions.links.send(engineUnit, "surface.state", map[string]any{
+		"window": window, "pane": pane,
+	})
+	if err != nil {
+		return nil, err
+	}
+	combined := make(map[string]any, len(state)+5)
+	for key, value := range state {
+		combined[key] = value
+	}
+	combined["phase"], combined["session"] = phase, session
+	combined["cols"], combined["rows"], combined["sequence"] = cols, rows, sequence
+	return combined, nil
 }
 
 func asUint(value any) (uint64, bool) {

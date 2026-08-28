@@ -227,6 +227,7 @@ func TestStateMergesTheDeclaredEngineSurfaceState(t *testing.T) {
 	links := newFakeLinks()
 	links.answers["surface.state"] = map[string]any{
 		"pane": "tab-abc123.1", "paints": uint64(12),
+		"phase": "engine-value", "sequence": uint64(999), "cols": uint64(1),
 		"cursorRow": uint64(3), "cursorColumn": uint64(7),
 		"cursorVisible": true, "cursorShape": "bar", "cursorBlinking": true,
 		"cursorAnimation": map[string]any{"intervalMs": uint64(750), "phase": "off"},
