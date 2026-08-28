@@ -22,6 +22,14 @@ forwarding, layer composition or geometry reporting.
   of its own; cgo keeps only `#cgo` directives and the include.
 - `native_unsupported.go` — every other target fails by name rather than leaving a blank pane.
 
+## State ownership
+
+The `state` delivery reads `surface.state` once from the pane's declared engine unit. Engine
+fields include renderer counters and cursor shape, visibility, position and animation. This
+service then adds the session phase and id, the applied grid and the channel frame sequence it
+owns. Those service-owned keys take precedence if an engine returns the same key. Frame events
+trigger this read; the service does not poll the engine.
+
 ## Verification
 
 ```sh
