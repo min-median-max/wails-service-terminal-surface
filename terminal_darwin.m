@@ -10,11 +10,15 @@
 @end
 
 @implementation SoksakTerminalHostView
-// Clicks fall through to the webview document beneath: focus and pointer
-// gestures live in the DOM until the native input layer exists.
-- (NSView *)hitTest:(NSPoint)point {
-    (void)point;
-    return nil;
+
+// Match the browser native host's AppKit responder contract. Returning nil from hitTest made
+// terminal clicks fall through to WebContent, while the native terminal surface remained above it;
+// the pane could look present but never became the responder that owns input.
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { (void)event; return YES; }
+- (void)mouseDown:(NSEvent *)event {
+    (void)event;
+    [self.window makeFirstResponder:self];
 }
 
 - (BOOL)isFlipped { return NO; }
