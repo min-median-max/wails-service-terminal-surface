@@ -69,15 +69,15 @@ func (sessions *Sessions) UseBinder(binder paneBinder) { sessions.binder = binde
 // SurfaceSource is map[string]string, so numbers travel as decimal strings and
 // the theme travels as one JSON string.
 type paneSource struct {
-	window, pane       string
-	ptyUnit            string
-	engineUnit         string
-	pixelW, pixelH     float64
-	scale              float64
-	fontFamily         string
-	fontPt             float64
-	theme              json.RawMessage
-	cwd, shell         string
+	window, pane   string
+	ptyUnit        string
+	engineUnit     string
+	pixelW, pixelH float64
+	scale          float64
+	fontFamily     string
+	fontPt         float64
+	theme          json.RawMessage
+	cwd, shell     string
 }
 
 func parseSource(source map[string]string) (paneSource, error) {
