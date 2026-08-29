@@ -1,6 +1,7 @@
 package terminalsurface
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -258,6 +259,38 @@ func TestSelectionForwardValidatesTheCompleteOwnedRequest(t *testing.T) {
 	last := links.calls[len(links.calls)-1]
 	if last.request["window"] != "win-abc123" || last.request["pane"] != "tab-abc123.1" {
 		t.Fatalf("selection lost its owner address: %v", last.request)
+	}
+}
+
+func TestWheelForwardValidatesTheEngineRouteAndWritesReturnedInputOnce(t *testing.T) {
+	links := newFakeLinks()
+	input := []byte("\x1b[<64;2;3M")
+	links.answers["surface.wheel"] = map[string]any{
+		"route": "mouse-report", "offset": nil, "historySize": nil,
+		"dataB64": base64.StdEncoding.EncodeToString(input),
+	}
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	before := len(links.calls)
+	answer, err := sessions.Forward("tab-abc123.1", "surface.wheel", map[string]any{
+		"point":  map[string]any{"x": float64(12), "y": float64(24)},
+		"deltaX": float64(0), "deltaY": float64(1), "deltaMode": "line",
+		"modifiers": map[string]any{"shift": false, "alt": false, "control": false, "meta": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer["route"] != "mouse-report" || answer["written"] != float64(len(input)) {
+		t.Fatalf("wheel answer = %v", answer)
+	}
+	wheelCalls := links.calls[before:]
+	if len(wheelCalls) != 2 || wheelCalls[0].command != "surface.wheel" || wheelCalls[1].command != "pty.write" {
+		t.Fatalf("wheel did not use engine then the single PTY writer: %v", wheelCalls)
+	}
+	if wheelCalls[1].request["dataB64"] != base64.StdEncoding.EncodeToString(input) {
+		t.Fatalf("wheel PTY bytes changed: %v", wheelCalls[1].request)
 	}
 }
 

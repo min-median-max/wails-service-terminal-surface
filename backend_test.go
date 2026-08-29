@@ -299,6 +299,21 @@ func TestDeliverScrollForwardsTheSurfaceCommand(t *testing.T) {
 	}
 }
 
+func TestDeliverWheelForwardsTheDeviceFacts(t *testing.T) {
+	backend, _, verbs := appliedBackend(t)
+	answer, err := backend.Deliver("terminal-1", map[string]any{
+		"verb": "wheel", "point": map[string]any{"x": 10.0, "y": 20.0},
+		"deltaX": 0.0, "deltaY": 1.0, "deltaMode": "line",
+		"modifiers": map[string]any{"shift": false, "alt": false, "control": false, "meta": false},
+	})
+	if err != nil || answer["offset"] != 1 {
+		t.Fatalf("wheel answered %v, %v", answer, err)
+	}
+	if len(verbs.forwards) != 1 || verbs.forwards[0] != "tab-abc123.1:surface.wheel" {
+		t.Fatalf("wheel did not forward: %v", verbs.forwards)
+	}
+}
+
 func TestDeliverStateAndReadAnswer(t *testing.T) {
 	backend, _, _ := appliedBackend(t)
 	state, err := backend.Deliver("terminal-1", map[string]any{"verb": "state"})
