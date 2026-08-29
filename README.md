@@ -30,6 +30,11 @@ service then adds the session phase and id, the applied grid and the channel fra
 owns. Those service-owned keys take precedence if an engine returns the same key. Frame events
 trigger this read; the service does not poll the engine.
 
+Selection forwarding uses `soksak-contract-surface` 0.0.5. The service completes the owner address
+with the recorded window and pane, rejects an invalid request before the engine call, and validates
+the complete versioned snapshot before returning it. It does not interpret gesture kinds or derive
+selected text.
+
 ## Verification
 
 ```sh

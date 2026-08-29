@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	surfacecontract "github.com/soksak-ai/soksak-contract-surface"
 )
 
 // paneBinder is what the sessions tell the surface channel: which sidecar's
@@ -397,7 +399,21 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 	for key, value := range request {
 		full[key] = value
 	}
-	return sessions.links.send(record.engineUnit, command, full)
+	if command == "surface.selection" {
+		if _, err := surfacecontract.ValidateSelection(full); err != nil {
+			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
+		}
+	}
+	answer, err := sessions.links.send(record.engineUnit, command, full)
+	if err != nil {
+		return nil, err
+	}
+	if command == "surface.selection" {
+		if _, err := surfacecontract.ValidateSelectionSnapshot(answer); err != nil {
+			return nil, fmt.Errorf("SELECTION_STATE_INVALID: %w", err)
+		}
+	}
+	return answer, nil
 }
 
 // NoteFrame records what the channel saw; the state verb answers from here.

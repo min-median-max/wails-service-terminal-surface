@@ -232,6 +232,35 @@ func TestReadAndForwardReachTheEngineWithTheKey(t *testing.T) {
 	}
 }
 
+func TestSelectionForwardValidatesTheCompleteOwnedRequest(t *testing.T) {
+	links := newFakeLinks()
+	links.answers["surface.selection"] = map[string]any{
+		"active": false, "text": "", "kind": nil, "anchor": nil, "focus": nil,
+		"gestureId": nil, "sequence": float64(0),
+	}
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	before := len(links.calls)
+	if _, err := sessions.Forward("tab-abc123.1", "surface.selection", map[string]any{}); err == nil {
+		t.Fatal("selection without an action was forwarded")
+	}
+	if len(links.calls) != before {
+		t.Fatalf("invalid selection reached the engine: %v", links.calls[before:])
+	}
+	answer, err := sessions.Forward(
+		"tab-abc123.1", "surface.selection", map[string]any{"action": "read"},
+	)
+	if err != nil || answer["active"] != false {
+		t.Fatalf("selection read answered %v, %v", answer, err)
+	}
+	last := links.calls[len(links.calls)-1]
+	if last.request["window"] != "win-abc123" || last.request["pane"] != "tab-abc123.1" {
+		t.Fatalf("selection lost its owner address: %v", last.request)
+	}
+}
+
 func TestStateAnswersWhatTheChannelSaw(t *testing.T) {
 	links := newFakeLinks()
 	sessions := NewSessions("install-1", links.asLinks())
