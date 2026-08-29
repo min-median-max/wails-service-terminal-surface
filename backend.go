@@ -244,7 +244,7 @@ func (backend *Backend) Deliver(id string, message map[string]any) (map[string]a
 			return nil, err
 		}
 		return map[string]any{"text": text}, nil
-	case "scroll", "wheel", "theme", "selection":
+	case "scroll", "pointer", "wheel", "theme", "selection":
 		request := make(map[string]any, len(message))
 		for key, value := range message {
 			if key != "verb" {

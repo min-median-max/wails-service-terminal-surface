@@ -371,6 +371,20 @@ func (sessions *Sessions) Input(pane, data string) error {
 	return err
 }
 
+func (sessions *Sessions) writeReturnedInput(pane, dataB64, label string) (uint64, error) {
+	if dataB64 == "" {
+		return 0, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(dataB64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: dataB64: %w", label, err)
+	}
+	if err := sessions.Input(pane, string(decoded)); err != nil {
+		return 0, err
+	}
+	return uint64(len(decoded)), nil
+}
+
 // Read answers the viewport text from the render sidecar's own mirror.
 func (sessions *Sessions) Read(pane string, lines int) (string, error) {
 	record, err := sessions.record(pane)
@@ -409,6 +423,11 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
 		}
 	}
+	if command == "surface.pointer" {
+		if _, err := surfacecontract.ValidatePointer(full); err != nil {
+			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
+		}
+	}
 	answer, err := sessions.links.send(record.engineUnit, command, full)
 	if err != nil {
 		return nil, err
@@ -423,21 +442,33 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 		if validateErr != nil {
 			return nil, fmt.Errorf("WHEEL_STATE_INVALID: %w", validateErr)
 		}
-		written := uint64(0)
+		dataB64 := ""
 		if result.DataB64 != nil {
-			decoded, decodeErr := base64.StdEncoding.DecodeString(*result.DataB64)
-			if decodeErr != nil {
-				return nil, fmt.Errorf("WHEEL_STATE_INVALID: dataB64: %w", decodeErr)
-			}
-			if inputErr := sessions.Input(pane, string(decoded)); inputErr != nil {
-				return nil, inputErr
-			}
-			written = uint64(len(decoded))
+			dataB64 = *result.DataB64
+		}
+		written, writeErr := sessions.writeReturnedInput(pane, dataB64, "WHEEL_STATE_INVALID")
+		if writeErr != nil {
+			return nil, writeErr
 		}
 		return map[string]any{
 			"route": string(result.Route), "offset": result.Offset,
 			"historySize": result.HistorySize, "written": written,
 		}, nil
+	}
+	if command == "surface.pointer" {
+		result, validateErr := surfacecontract.ValidatePointerEngineResult(answer)
+		if validateErr != nil {
+			return nil, fmt.Errorf("POINTER_STATE_INVALID: %w", validateErr)
+		}
+		dataB64 := ""
+		if result.DataB64 != nil {
+			dataB64 = *result.DataB64
+		}
+		written, writeErr := sessions.writeReturnedInput(pane, dataB64, "POINTER_STATE_INVALID")
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		return map[string]any{"route": string(result.Route), "written": written}, nil
 	}
 	return answer, nil
 }
