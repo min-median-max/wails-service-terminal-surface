@@ -7,7 +7,9 @@ package terminalsurface
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,7 @@ type paneRecord struct {
 	pane, window string
 	ptyUnit      string
 	engineUnit   string
+	source       paneSource
 	generation   uint64
 	session      uint64
 	cols, rows   uint64
@@ -155,6 +158,7 @@ func (sessions *Sessions) Start(source map[string]string, generation uint64) err
 	record := &paneRecord{
 		pane: parsed.pane, window: parsed.window,
 		ptyUnit: parsed.ptyUnit, engineUnit: parsed.engineUnit,
+		source:     parsed,
 		generation: generation, phase: "opening",
 	}
 	sessions.mu.Lock()
@@ -177,6 +181,64 @@ func (sessions *Sessions) Start(source map[string]string, generation uint64) err
 		return err
 	}
 	return nil
+}
+
+// RestartUnit rebuilds every live declaration that depends on one replaced process. The DOM
+// generation stays unchanged; process identity and declaration identity are independent.
+func (sessions *Sessions) RestartUnit(unit string) error {
+	sessions.mu.Lock()
+	panes := make([]string, 0, len(sessions.panes))
+	for pane, record := range sessions.panes {
+		if record.engineUnit == unit || record.ptyUnit == unit {
+			panes = append(panes, pane)
+		}
+	}
+	sessions.mu.Unlock()
+	sort.Strings(panes)
+
+	var failures []error
+	for _, pane := range panes {
+		if err := sessions.restartPane(pane, unit); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (sessions *Sessions) restartPane(pane, unit string) error {
+	unlock := sessions.lockPane(pane)
+	defer unlock()
+	record, err := sessions.record(pane)
+	if err != nil {
+		return nil
+	}
+	if record.engineUnit != unit && record.ptyUnit != unit {
+		return nil
+	}
+	parsed := record.source
+	sessions.mu.Lock()
+	record.phase = "opening"
+	record.token = ""
+	sessions.mu.Unlock()
+
+	warm := sessions.rehydrate(parsed)
+	if !warm {
+		if err := sessions.freshObserver(parsed); err != nil {
+			sessions.markRestartFailed(record)
+			return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
+		}
+	}
+	if err := sessions.openAndRender(parsed, record, warm); err != nil {
+		sessions.markRestartFailed(record)
+		return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
+	}
+	return nil
+}
+
+func (sessions *Sessions) markRestartFailed(record *paneRecord) {
+	sessions.mu.Lock()
+	record.phase = "blocked"
+	sessions.mu.Unlock()
 }
 
 // rehydrate asks the engine for its held mirror; any refusal means fresh.
