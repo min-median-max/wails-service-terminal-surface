@@ -314,6 +314,21 @@ func TestDeliverWheelForwardsTheDeviceFacts(t *testing.T) {
 	}
 }
 
+func TestDeliverPointerForwardsTheDeviceFacts(t *testing.T) {
+	backend, _, verbs := appliedBackend(t)
+	answer, err := backend.Deliver("terminal-1", map[string]any{
+		"verb": "pointer", "point": map[string]any{"x": 10.0, "y": 20.0},
+		"phase": "down", "button": "left", "clickCount": 1.0,
+		"modifiers": map[string]any{"shift": false, "alt": false, "control": false, "meta": false},
+	})
+	if err != nil || answer["offset"] != 1 {
+		t.Fatalf("pointer answered %v, %v", answer, err)
+	}
+	if len(verbs.forwards) != 1 || verbs.forwards[0] != "tab-abc123.1:surface.pointer" {
+		t.Fatalf("pointer did not forward: %v", verbs.forwards)
+	}
+}
+
 func TestDeliverStateAndReadAnswer(t *testing.T) {
 	backend, _, _ := appliedBackend(t)
 	state, err := backend.Deliver("terminal-1", map[string]any{"verb": "state"})

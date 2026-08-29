@@ -324,6 +324,34 @@ func TestWheelForwardRejectsInvalidRequestsAndEngineEffectsBeforePtyWrite(t *tes
 	}
 }
 
+func TestPointerForwardValidatesTheEngineRouteAndWritesReturnedInputOnce(t *testing.T) {
+	links := newFakeLinks()
+	input := []byte("\x1b[<0;2;3M")
+	links.answers["surface.pointer"] = map[string]any{
+		"route": "mouse-report", "dataB64": base64.StdEncoding.EncodeToString(input),
+	}
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	before := len(links.calls)
+	answer, err := sessions.Forward("tab-abc123.1", "surface.pointer", map[string]any{
+		"point": map[string]any{"x": float64(12), "y": float64(24)},
+		"phase": "down", "button": "left", "clickCount": float64(1),
+		"modifiers": map[string]any{"shift": false, "alt": false, "control": false, "meta": false},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer["route"] != "mouse-report" || answer["written"] != uint64(len(input)) {
+		t.Fatalf("pointer answer = %v", answer)
+	}
+	calls := links.calls[before:]
+	if len(calls) != 2 || calls[0].command != "surface.pointer" || calls[1].command != "pty.write" {
+		t.Fatalf("pointer did not use engine then the single PTY writer: %v", calls)
+	}
+}
+
 func TestStateAnswersWhatTheChannelSaw(t *testing.T) {
 	links := newFakeLinks()
 	sessions := NewSessions("install-1", links.asLinks())
