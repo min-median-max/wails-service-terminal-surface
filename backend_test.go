@@ -232,7 +232,6 @@ func TestApplyBindsThePaneViewToTheChannel(t *testing.T) {
 	}
 }
 
-
 type recordingVerbs struct {
 	resizes  []string
 	inputs   []string
@@ -369,7 +368,10 @@ func TestObservePanesSeesCreateAndRemove(t *testing.T) {
 	if _, err := backend.Apply(window, snapshotOf(2)); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0] != "tab-abc123.1:1:created" || events[1] != "tab-abc123.1:1:removed" {
+	if _, err := backend.Apply(window, snapshotOf(3, paneSurface("terminal-1", 1))); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[0] != "tab-abc123.1:1:created" || events[1] != "tab-abc123.1:1:removed" || events[2] != "tab-abc123.1:2:created" {
 		t.Fatalf("pane observation saw %v", events)
 	}
 }

@@ -26,10 +26,11 @@ const (
 )
 
 type nativeOperation struct {
-	action  nativeAction
-	surface compositor.Surface
-	native  unsafe.Pointer
-	window  unsafe.Pointer
+	action              nativeAction
+	surface             compositor.Surface
+	native              unsafe.Pointer
+	window              unsafe.Pointer
+	lifecycleGeneration uint64
 }
 
 type nativeResult struct {
@@ -47,10 +48,11 @@ type nativeDriver interface {
 }
 
 type nativeOwner struct {
-	generation uint64
-	native     unsafe.Pointer
-	window     unsafe.Pointer
-	surface    compositor.Surface
+	generation          uint64
+	lifecycleGeneration uint64
+	native              unsafe.Pointer
+	window              unsafe.Pointer
+	surface             compositor.Surface
 }
 
 // paneChannel is what the surface channel offers the inventory: a pane's host
@@ -76,11 +78,12 @@ type paneVerbs interface {
 
 // Backend is the terminal surface kind.
 type Backend struct {
-	driver  nativeDriver
-	owners  map[string]nativeOwner
-	channel paneChannel
-	verbs   paneVerbs
-	onPane  func(created bool, generation uint64, source compositor.SurfaceSource)
+	driver                  nativeDriver
+	owners                  map[string]nativeOwner
+	channel                 paneChannel
+	verbs                   paneVerbs
+	onPane                  func(created bool, generation uint64, source compositor.SurfaceSource)
+	nextLifecycleGeneration uint64
 }
 
 func newBackend(driver nativeDriver) *Backend {
@@ -111,20 +114,32 @@ func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapsho
 		if err != nil {
 			return nil, err
 		}
+		creating := make(map[string]bool)
+		for _, operation := range operations {
+			if operation.action == nativeRemove {
+				delete(backend.owners, operation.surface.ID)
+			}
+			if operation.action == nativeCreate {
+				creating[operation.surface.ID] = true
+			}
+		}
 		for _, result := range results {
 			if result.native == nil {
 				return nil, fmt.Errorf("terminal surface owner is empty: %s", result.surface.ID)
 			}
-			backend.owners[result.surface.ID] = nativeOwner{
-				generation: result.surface.Generation,
-				native:     result.native,
-				window:     result.window,
-				surface:    result.surface,
+			lifecycleGeneration := uint64(0)
+			if creating[result.surface.ID] {
+				backend.nextLifecycleGeneration++
+				lifecycleGeneration = backend.nextLifecycleGeneration
+			} else if held := backend.owners[result.surface.ID]; held.native != nil {
+				lifecycleGeneration = held.lifecycleGeneration
 			}
-		}
-		for _, operation := range operations {
-			if operation.action == nativeRemove {
-				delete(backend.owners, operation.surface.ID)
+			backend.owners[result.surface.ID] = nativeOwner{
+				generation:          result.surface.Generation,
+				lifecycleGeneration: lifecycleGeneration,
+				native:              result.native,
+				window:              result.window,
+				surface:             result.surface,
 			}
 		}
 		for _, operation := range operations {
@@ -140,14 +155,14 @@ func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapsho
 					}
 				}
 				if backend.onPane != nil {
-					backend.onPane(true, operation.surface.Generation, operation.surface.Source)
+					backend.onPane(true, backend.owners[operation.surface.ID].lifecycleGeneration, operation.surface.Source)
 				}
 			case nativeRemove:
 				if backend.channel != nil {
 					backend.channel.UnbindView(pane)
 				}
 				if backend.onPane != nil {
-					backend.onPane(false, operation.surface.Generation, operation.surface.Source)
+					backend.onPane(false, operation.lifecycleGeneration, operation.surface.Source)
 				}
 			}
 		}
@@ -278,7 +293,7 @@ func planBatch(current map[string]nativeOwner, window unsafe.Pointer, snapshot c
 		switch {
 		case held && owner.generation != surface.Generation:
 			operations = append(operations,
-				nativeOperation{action: nativeRemove, surface: owner.surface, native: owner.native, window: window},
+				nativeOperation{action: nativeRemove, surface: owner.surface, native: owner.native, window: window, lifecycleGeneration: owner.lifecycleGeneration},
 				nativeOperation{action: nativeCreate, surface: surface, window: window})
 		case held:
 			if !placementEqual(owner.surface, surface) {
@@ -297,7 +312,7 @@ func planBatch(current map[string]nativeOwner, window unsafe.Pointer, snapshot c
 	sort.Strings(removed)
 	for _, id := range removed {
 		owner := current[id]
-		operations = append(operations, nativeOperation{action: nativeRemove, surface: owner.surface, native: owner.native, window: window})
+		operations = append(operations, nativeOperation{action: nativeRemove, surface: owner.surface, native: owner.native, window: window, lifecycleGeneration: owner.lifecycleGeneration})
 	}
 	return operations
 }
