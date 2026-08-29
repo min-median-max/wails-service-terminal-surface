@@ -282,7 +282,7 @@ func TestWheelForwardValidatesTheEngineRouteAndWritesReturnedInputOnce(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer["route"] != "mouse-report" || answer["written"] != float64(len(input)) {
+	if answer["route"] != "mouse-report" || answer["written"] != uint64(len(input)) {
 		t.Fatalf("wheel answer = %v", answer)
 	}
 	wheelCalls := links.calls[before:]
@@ -291,6 +291,36 @@ func TestWheelForwardValidatesTheEngineRouteAndWritesReturnedInputOnce(t *testin
 	}
 	if wheelCalls[1].request["dataB64"] != base64.StdEncoding.EncodeToString(input) {
 		t.Fatalf("wheel PTY bytes changed: %v", wheelCalls[1].request)
+	}
+}
+
+func TestWheelForwardRejectsInvalidRequestsAndEngineEffectsBeforePtyWrite(t *testing.T) {
+	links := newFakeLinks()
+	links.answers["surface.wheel"] = map[string]any{
+		"route": "scrollback", "offset": float64(2), "historySize": float64(20),
+		"dataB64": base64.StdEncoding.EncodeToString([]byte("not-scrollback")),
+	}
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	before := len(links.calls)
+	if _, err := sessions.Forward("tab-abc123.1", "surface.wheel", map[string]any{}); err == nil {
+		t.Fatal("wheel request without device facts reached the engine")
+	}
+	if len(links.calls) != before {
+		t.Fatalf("invalid wheel request reached a sidecar: %v", links.calls[before:])
+	}
+	request := map[string]any{
+		"point":  map[string]any{"x": float64(12), "y": float64(24)},
+		"deltaX": float64(0), "deltaY": float64(1), "deltaMode": "line",
+		"modifiers": map[string]any{"shift": false, "alt": false, "control": false, "meta": false},
+	}
+	if _, err := sessions.Forward("tab-abc123.1", "surface.wheel", request); err == nil {
+		t.Fatal("wheel engine result with two effects was accepted")
+	}
+	if got := links.calls[before:]; len(got) != 1 || got[0].command != "surface.wheel" {
+		t.Fatalf("invalid engine effect reached the PTY: %v", got)
 	}
 }
 

@@ -404,6 +404,11 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
 		}
 	}
+	if command == "surface.wheel" {
+		if _, err := surfacecontract.ValidateWheel(full); err != nil {
+			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
+		}
+	}
 	answer, err := sessions.links.send(record.engineUnit, command, full)
 	if err != nil {
 		return nil, err
@@ -412,6 +417,27 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 		if _, err := surfacecontract.ValidateSelectionSnapshot(answer); err != nil {
 			return nil, fmt.Errorf("SELECTION_STATE_INVALID: %w", err)
 		}
+	}
+	if command == "surface.wheel" {
+		result, validateErr := surfacecontract.ValidateWheelEngineResult(answer)
+		if validateErr != nil {
+			return nil, fmt.Errorf("WHEEL_STATE_INVALID: %w", validateErr)
+		}
+		written := uint64(0)
+		if result.DataB64 != nil {
+			decoded, decodeErr := base64.StdEncoding.DecodeString(*result.DataB64)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("WHEEL_STATE_INVALID: dataB64: %w", decodeErr)
+			}
+			if inputErr := sessions.Input(pane, string(decoded)); inputErr != nil {
+				return nil, inputErr
+			}
+			written = uint64(len(decoded))
+		}
+		return map[string]any{
+			"route": string(result.Route), "offset": result.Offset,
+			"historySize": result.HistorySize, "written": written,
+		}, nil
 	}
 	return answer, nil
 }
