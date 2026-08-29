@@ -219,10 +219,19 @@ func (backend *Backend) Deliver(id string, message map[string]any) (map[string]a
 			"bytes": len(pixels),
 		}, nil
 	case "focus":
-		if err := backend.driver.focus(owner.native); err != nil {
-			return nil, err
+		focused, ok := message["focused"].(bool)
+		if !ok {
+			return nil, fmt.Errorf("terminal surface focus requires focused boolean")
 		}
-		return map[string]any{}, nil
+		if backend.verbs == nil {
+			return nil, fmt.Errorf("terminal surface verb %q has no session layer; the host wired none", verb)
+		}
+		if focused {
+			if err := backend.driver.focus(owner.native); err != nil {
+				return nil, err
+			}
+		}
+		return backend.verbs.Forward(pane, "surface.focus", map[string]any{"focused": focused})
 	}
 	if backend.verbs == nil {
 		return nil, fmt.Errorf("terminal surface verb %q has no session layer; the host wired none", verb)

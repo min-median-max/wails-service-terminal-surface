@@ -498,6 +498,11 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
 		}
 	}
+	if command == "surface.focus" {
+		if _, err := surfacecontract.ValidateFocus(full); err != nil {
+			return nil, fmt.Errorf("INVALID_PARAMS: %w", err)
+		}
+	}
 	answer, err := sessions.links.send(record.engineUnit, command, full)
 	if err != nil {
 		return nil, err
@@ -539,6 +544,16 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 			return nil, writeErr
 		}
 		return map[string]any{"route": string(result.Route), "written": written}, nil
+	}
+	if command == "surface.focus" {
+		result, validateErr := surfacecontract.ValidateFocusEngineResult(answer)
+		if validateErr != nil {
+			return nil, fmt.Errorf("FOCUS_STATE_INVALID: %w", validateErr)
+		}
+		return map[string]any{
+			"focused":            result.Focused,
+			"cursorPresentation": string(result.CursorPresentation),
+		}, nil
 	}
 	return answer, nil
 }
