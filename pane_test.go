@@ -136,6 +136,38 @@ func TestWarmStartSkipsThePreparation(t *testing.T) {
 	})
 }
 
+func TestEngineUnitRestartReopensEveryHeldPane(t *testing.T) {
+	links := newFakeLinks()
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	restart, exposed := any(sessions).(interface{ RestartUnit(string) error })
+	if !exposed {
+		t.Fatal("Sessions does not expose the unit-restart transaction")
+	}
+	links.calls = nil
+	links.refuse = map[string]string{"terminal.rehydrate": "NOT_FOUND: replacement process has no mirror"}
+	if err := restart.RestartUnit("soksak-sidecar-terminal-alacritty"); err != nil {
+		t.Fatal(err)
+	}
+	equalSequence(t, links.sequence(), []string{
+		"soksak-sidecar-terminal-alacritty:terminal.rehydrate",
+		"soksak-sidecar-terminal-alacritty:terminal.prepareSession",
+		"soksak-sidecar-pty:pty.open",
+		"soksak-sidecar-terminal-alacritty:terminal.ensureSession",
+		"soksak-sidecar-terminal-alacritty:surface.open",
+		"soksak-sidecar-pty:pty.resize",
+	})
+	state, err := sessions.State("tab-abc123.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state["generation"] != uint64(1) || state["phase"] != "live" {
+		t.Fatalf("process restart changed the declaration identity: %v", state)
+	}
+}
+
 func TestStopDetachesAndCloseAlsoClosesTheShell(t *testing.T) {
 	for _, run := range []struct {
 		intent string
