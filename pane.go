@@ -25,6 +25,7 @@ type paneRecord struct {
 	pane, window string
 	ptyUnit      string
 	engineUnit   string
+	generation   uint64
 	session      uint64
 	cols, rows   uint64
 	phase        string
@@ -40,12 +41,25 @@ type Sessions struct {
 
 	mu    sync.Mutex
 	panes map[string]*paneRecord
+	locks map[string]*sync.Mutex
 }
 
 // NewSessions holds the installation identifier every surface.open carries —
 // the sidecar derives the channel name from it and looks the channel up.
 func NewSessions(identifier string, links Links) *Sessions {
-	return &Sessions{identifier: identifier, links: links, panes: make(map[string]*paneRecord)}
+	return &Sessions{identifier: identifier, links: links, panes: make(map[string]*paneRecord), locks: make(map[string]*sync.Mutex)}
+}
+
+func (sessions *Sessions) lockPane(pane string) func() {
+	sessions.mu.Lock()
+	lock := sessions.locks[pane]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		sessions.locks[pane] = lock
+	}
+	sessions.mu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 // UseBinder connects the surface channel's pane binding.
@@ -129,20 +143,22 @@ const placeholderCols, placeholderRows = 80, 24
 
 // Start opens one pane: warm when the engine still holds its mirror, fresh
 // otherwise. The pty write and resize stay this service's alone.
-func (sessions *Sessions) Start(source map[string]string) error {
+func (sessions *Sessions) Start(source map[string]string, generation uint64) error {
 	parsed, err := parseSource(source)
 	if err != nil {
 		return err
 	}
+	unlock := sessions.lockPane(parsed.pane)
+	defer unlock()
 	record := &paneRecord{
 		pane: parsed.pane, window: parsed.window,
 		ptyUnit: parsed.ptyUnit, engineUnit: parsed.engineUnit,
-		phase: "opening",
+		generation: generation, phase: "opening",
 	}
 	sessions.mu.Lock()
-	if _, held := sessions.panes[parsed.pane]; held {
+	if held := sessions.panes[parsed.pane]; held != nil && held.generation >= generation {
 		sessions.mu.Unlock()
-		return fmt.Errorf("pane %s already runs", parsed.pane)
+		return nil
 	}
 	sessions.panes[parsed.pane] = record
 	sessions.mu.Unlock()
@@ -150,12 +166,12 @@ func (sessions *Sessions) Start(source map[string]string) error {
 	warm := sessions.rehydrate(parsed)
 	if !warm {
 		if err := sessions.freshObserver(parsed); err != nil {
-			sessions.drop(parsed.pane)
+			sessions.drop(parsed.pane, generation)
 			return err
 		}
 	}
 	if err := sessions.openAndRender(parsed, record, warm); err != nil {
-		sessions.drop(parsed.pane)
+		sessions.drop(parsed.pane, generation)
 		return err
 	}
 	return nil
@@ -264,9 +280,11 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	return nil
 }
 
-func (sessions *Sessions) drop(pane string) {
+func (sessions *Sessions) drop(pane string, generation uint64) {
 	sessions.mu.Lock()
-	delete(sessions.panes, pane)
+	if record := sessions.panes[pane]; record != nil && record.generation == generation {
+		delete(sessions.panes, pane)
+	}
 	sessions.mu.Unlock()
 }
 
@@ -285,6 +303,8 @@ func (sessions *Sessions) record(pane string) (*paneRecord, error) {
 // nothing was ever taken (the plan's ack step guards a stream this path does
 // not have).
 func (sessions *Sessions) Stop(pane, intent string) error {
+	unlock := sessions.lockPane(pane)
+	defer unlock()
 	record, err := sessions.record(pane)
 	if err != nil {
 		return err
@@ -309,7 +329,30 @@ func (sessions *Sessions) Stop(pane, intent string) error {
 			return err
 		}
 	}
-	sessions.drop(pane)
+	sessions.drop(pane, record.generation)
+	return nil
+}
+
+// Remove applies one compositor removal only to the declaration generation it names. A late
+// removal from an older inventory can never close the surface opened by a newer declaration.
+func (sessions *Sessions) Remove(pane string, generation uint64) error {
+	unlock := sessions.lockPane(pane)
+	defer unlock()
+	record, err := sessions.record(pane)
+	if err != nil || record.generation != generation {
+		return nil
+	}
+	if _, err := sessions.links.send(record.engineUnit, "surface.close", map[string]any{
+		"window": record.window, "pane": pane,
+	}); err != nil {
+		return err
+	}
+	if _, err := sessions.links.send(record.ptyUnit, "pty.detachRenderer", map[string]any{
+		"session": record.session,
+	}); err != nil {
+		return err
+	}
+	sessions.drop(pane, generation)
 	return nil
 }
 
@@ -406,7 +449,7 @@ func (sessions *Sessions) State(pane string) (map[string]any, error) {
 	}
 	sessions.mu.Lock()
 	window, engineUnit := record.window, record.engineUnit
-	phase, session := record.phase, record.session
+	phase, session, generation := record.phase, record.session, record.generation
 	cols, rows, sequence := record.cols, record.rows, record.seq
 	sessions.mu.Unlock()
 	state, err := sessions.links.send(engineUnit, "surface.state", map[string]any{
@@ -420,6 +463,7 @@ func (sessions *Sessions) State(pane string) (map[string]any, error) {
 		combined[key] = value
 	}
 	combined["phase"], combined["session"] = phase, session
+	combined["generation"] = generation
 	combined["cols"], combined["rows"], combined["sequence"] = cols, rows, sequence
 	return combined, nil
 }

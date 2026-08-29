@@ -87,7 +87,7 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 	links := newFakeLinks()
 	links.refuse = map[string]string{"terminal.rehydrate": "NOT_FOUND: nothing held"}
 	sessions := NewSessions("install-1", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	equalSequence(t, links.sequence(), []string{
@@ -124,7 +124,7 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 func TestWarmStartSkipsThePreparation(t *testing.T) {
 	links := newFakeLinks()
 	sessions := NewSessions("install-1", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	equalSequence(t, links.sequence(), []string{
@@ -152,7 +152,7 @@ func TestStopDetachesAndCloseAlsoClosesTheShell(t *testing.T) {
 	} {
 		links := newFakeLinks()
 		sessions := NewSessions("install-1", links.asLinks())
-		if err := sessions.Start(paneSourceMap()); err != nil {
+		if err := sessions.Start(paneSourceMap(), 1); err != nil {
 			t.Fatal(err)
 		}
 		opened := len(links.calls)
@@ -166,10 +166,35 @@ func TestStopDetachesAndCloseAlsoClosesTheShell(t *testing.T) {
 	}
 }
 
+func TestLateRemovalCannotCloseANewerDeclarationGeneration(t *testing.T) {
+	links := newFakeLinks()
+	sessions := NewSessions("install-1", links.asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.Start(paneSourceMap(), 2); err != nil {
+		t.Fatal(err)
+	}
+	before := len(links.calls)
+	if err := sessions.Remove("tab-abc123.1", 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := links.sequence()[before:]; len(got) != 0 {
+		t.Fatalf("stale generation closed the current surface: %v", got)
+	}
+	state, err := sessions.State("tab-abc123.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state["generation"] != uint64(2) || state["phase"] != "live" {
+		t.Fatalf("new declaration is not current: %v", state)
+	}
+}
+
 func TestInputWritesThePtyAndOnlyThePty(t *testing.T) {
 	links := newFakeLinks()
 	sessions := NewSessions("install-1", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	before := len(links.calls)
@@ -190,7 +215,7 @@ func TestReadAndForwardReachTheEngineWithTheKey(t *testing.T) {
 	links.answers["surface.read"] = map[string]any{"text": "hi\n"}
 	links.answers["surface.scroll"] = map[string]any{"offset": float64(3), "historySize": float64(40)}
 	sessions := NewSessions("install-1", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	text, err := sessions.Read("tab-abc123.1", 5)
@@ -210,7 +235,7 @@ func TestReadAndForwardReachTheEngineWithTheKey(t *testing.T) {
 func TestStateAnswersWhatTheChannelSaw(t *testing.T) {
 	links := newFakeLinks()
 	sessions := NewSessions("install-1", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	sessions.NoteFrame("tab-abc123.1", 42)
@@ -233,7 +258,7 @@ func TestStateMergesTheDeclaredEngineSurfaceState(t *testing.T) {
 		"cursorAnimation": map[string]any{"intervalMs": uint64(750), "phase": "off"},
 	}
 	sessions := NewSessions("install-1", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	sessions.NoteFrame("tab-abc123.1", 42)
@@ -262,7 +287,7 @@ func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 	source := paneSourceMap()
 	delete(source, "shell")
 	sessions := NewSessions("install-1", newFakeLinks().asLinks())
-	if err := sessions.Start(source); err == nil || !strings.Contains(err.Error(), "shell") {
+	if err := sessions.Start(source, 1); err == nil || !strings.Contains(err.Error(), "shell") {
 		t.Fatalf("a missing shell was not refused by name: %v", err)
 	}
 }
@@ -272,7 +297,7 @@ func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 func TestResizeAsksTheEngineThenResizesThePty(t *testing.T) {
 	links := newFakeLinks()
 	sessions := NewSessions("com.soksak.test", links.asLinks())
-	if err := sessions.Start(paneSourceMap()); err != nil {
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
 	links.answers["surface.resize"] = map[string]any{"cols": float64(120), "rows": float64(40)}

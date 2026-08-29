@@ -359,8 +359,8 @@ func TestObservePanesSeesCreateAndRemove(t *testing.T) {
 	driver := &recordingDriver{}
 	backend := newBackend(driver)
 	var events []string
-	backend.ObservePanes(func(created bool, source compositor.SurfaceSource) {
-		events = append(events, source["pane"]+":"+map[bool]string{true: "created", false: "removed"}[created])
+	backend.ObservePanes(func(created bool, generation uint64, source compositor.SurfaceSource) {
+		events = append(events, fmt.Sprintf("%s:%d:%s", source["pane"], generation, map[bool]string{true: "created", false: "removed"}[created]))
 	})
 	window := unsafe.Pointer(new(byte))
 	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("terminal-1", 1))); err != nil {
@@ -369,7 +369,7 @@ func TestObservePanesSeesCreateAndRemove(t *testing.T) {
 	if _, err := backend.Apply(window, snapshotOf(2)); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0] != "tab-abc123.1:created" || events[1] != "tab-abc123.1:removed" {
+	if len(events) != 2 || events[0] != "tab-abc123.1:1:created" || events[1] != "tab-abc123.1:1:removed" {
 		t.Fatalf("pane observation saw %v", events)
 	}
 }
