@@ -16,9 +16,15 @@ type recordedCall struct {
 
 // fakeLinks answers scripted replies and records every call in order.
 type fakeLinks struct {
+	starts  []string
 	calls   []recordedCall
 	answers map[string]map[string]any
 	refuse  map[string]string
+}
+
+func (links *fakeLinks) start(unit string) error {
+	links.starts = append(links.starts, unit)
+	return nil
 }
 
 func newFakeLinks() *fakeLinks {
@@ -47,7 +53,7 @@ type refusal string
 func (r refusal) Error() string { return string(r) }
 
 func (links *fakeLinks) asLinks() Links {
-	return Links{Send: links.send}
+	return Links{Start: links.start, Send: links.send}
 }
 
 func (links *fakeLinks) sequence() []string {
@@ -91,6 +97,10 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 	if err := sessions.Start(paneSourceMap(), 1); err != nil {
 		t.Fatal(err)
 	}
+	equalSequence(t, links.starts, []string{
+		"soksak-sidecar-pty",
+		"soksak-sidecar-terminal-alacritty",
+	})
 	equalSequence(t, links.sequence(), []string{
 		"soksak-sidecar-terminal-alacritty:terminal.rehydrate",
 		"soksak-sidecar-terminal-alacritty:terminal.prepareSession",
