@@ -30,7 +30,7 @@ service then adds the session phase and id, the applied grid and the channel fra
 owns. Those service-owned keys take precedence if an engine returns the same key. Frame events
 trigger this read; the service does not poll the engine.
 
-Selection forwarding uses `soksak-contract-surface` 0.0.7. The service completes the owner address
+Selection forwarding uses `soksak-contract-surface` 0.0.8. The service completes the owner address
 with the recorded window and pane, rejects an invalid request before the engine call, and validates
 the complete versioned snapshot before returning it. It does not interpret gesture kinds or derive
 selected text.
@@ -44,6 +44,11 @@ before the engine and an engine answer with two effects stops before the PTY.
 Pointer forwarding follows the same ownership: the service adds the recorded window and pane,
 validates phase, button, click count, point and modifiers, validates the engine's one-route result,
 and writes returned input once through the same PTY path. An ignored pointer result writes nothing.
+
+Focus forwarding carries one explicit boolean. Focus gain transfers the native first responder and
+forwards `surface.focus` to the recorded engine; focus loss forwards only the engine transaction.
+The contract validates the engine/hollow-block presentation answer. This service does not inspect
+or replace engine cursor shape and blink state.
 
 ## Verification
 

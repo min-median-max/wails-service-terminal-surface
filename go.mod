@@ -4,4 +4,4 @@ go 1.26.3
 
 require github.com/min-median-max/wails-service-native-compositor v0.0.0-20260822033405-3530617b540f
 
-require github.com/soksak-ai/soksak-contract-surface v0.0.0-20260829090523-321ac93c007d
+require github.com/soksak-ai/soksak-contract-surface v0.0.0-20260829141509-4bcf917cd104

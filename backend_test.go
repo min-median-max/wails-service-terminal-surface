@@ -164,18 +164,22 @@ func TestDeliverSnapshotAnswersThePixels(t *testing.T) {
 	}
 }
 
-func TestDeliverFocusReachesTheDriver(t *testing.T) {
-	driver := &recordingDriver{}
-	backend := newBackend(driver)
-	window := byte(1)
-	if _, err := backend.Apply(unsafe.Pointer(&window), snapshotOf(1, paneSurface("terminal-1", 1))); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := backend.Deliver("terminal-1", map[string]any{"verb": "focus"}); err != nil {
-		t.Fatal(err)
+func TestDeliverFocusRoutesGainAndLossToTheEngineAndOnlyGainToTheNativeDriver(t *testing.T) {
+	backend, driver, verbs := appliedBackend(t)
+	for _, focused := range []bool{true, false} {
+		answer, err := backend.Deliver("terminal-1", map[string]any{"verb": "focus", "focused": focused})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if answer["focused"] != focused {
+			t.Fatalf("focus answer=%v", answer)
+		}
 	}
 	if driver.focused != 1 {
-		t.Fatalf("focus reached the driver %d times", driver.focused)
+		t.Fatalf("native focus reached the driver %d times", driver.focused)
+	}
+	if len(verbs.focuses) != 2 || !verbs.focuses[0] || verbs.focuses[1] {
+		t.Fatalf("engine focuses=%v", verbs.focuses)
 	}
 }
 
@@ -237,6 +241,7 @@ type recordingVerbs struct {
 	inputs   []string
 	stops    []string
 	forwards []string
+	focuses  []bool
 }
 
 func (verbs *recordingVerbs) Input(pane, data string) error {
@@ -246,8 +251,17 @@ func (verbs *recordingVerbs) Input(pane, data string) error {
 
 func (verbs *recordingVerbs) Read(string, int) (string, error) { return "text\n", nil }
 
-func (verbs *recordingVerbs) Forward(pane, command string, _ map[string]any) (map[string]any, error) {
+func (verbs *recordingVerbs) Forward(pane, command string, request map[string]any) (map[string]any, error) {
 	verbs.forwards = append(verbs.forwards, pane+":"+command)
+	if command == "surface.focus" {
+		focused, _ := request["focused"].(bool)
+		verbs.focuses = append(verbs.focuses, focused)
+		presentation := "hollow-block"
+		if focused {
+			presentation = "engine"
+		}
+		return map[string]any{"focused": focused, "cursorPresentation": presentation}, nil
+	}
 	return map[string]any{"offset": 1}, nil
 }
 
