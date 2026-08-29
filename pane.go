@@ -153,6 +153,14 @@ func (sessions *Sessions) Start(source map[string]string, generation uint64) err
 	if err != nil {
 		return err
 	}
+	// The engine discovers the PTY endpoint from the exact binding injected at process start.
+	// Start the dependency first so its token and endpoint exist before the engine reads them.
+	if err := sessions.links.start(parsed.ptyUnit); err != nil {
+		return fmt.Errorf("start terminal pty %s: %w", parsed.ptyUnit, err)
+	}
+	if err := sessions.links.start(parsed.engineUnit); err != nil {
+		return fmt.Errorf("start terminal engine %s: %w", parsed.engineUnit, err)
+	}
 	unlock := sessions.lockPane(parsed.pane)
 	defer unlock()
 	record := &paneRecord{

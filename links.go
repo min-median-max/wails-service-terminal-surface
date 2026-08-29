@@ -9,7 +9,15 @@ import "fmt"
 
 // Links carries one request to one sidecar unit and answers its reply.
 type Links struct {
-	Send func(unit string, command string, request map[string]any) (map[string]any, error)
+	Start func(unit string) error
+	Send  func(unit string, command string, request map[string]any) (map[string]any, error)
+}
+
+func (links Links) start(unit string) error {
+	if links.Start == nil {
+		return fmt.Errorf("%s has no sidecar starter; the host injected none", unit)
+	}
+	return links.Start(unit)
 }
 
 func (links Links) send(unit, command string, request map[string]any) (map[string]any, error) {
