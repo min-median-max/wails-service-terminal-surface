@@ -462,6 +462,24 @@ func TestFailedGenerationRemainsObservableByStatus(t *testing.T) {
 	}
 }
 
+func TestDependencyStartFailureRemainsObservableBeforePaneRecordExists(t *testing.T) {
+	links := newFakeLinks()
+	sessions := NewSessions("install-1", Links{
+		Start: func(unit string) error { return refusal("START_REFUSED: " + unit) },
+		Send:  links.send,
+	})
+	if err := sessions.Start(paneSourceMap(), 9); err == nil {
+		t.Fatal("dependency start failure was accepted")
+	}
+	status := sessions.Status()
+	if len(status) != 1 || status[0]["pane"] != "tab-abc123.1" || status[0]["generation"] != uint64(9) || status[0]["phase"] != "blocked" {
+		t.Fatalf("pre-record failure status = %#v", status)
+	}
+	if message, _ := status[0]["lastError"].(string); !strings.Contains(message, "START_REFUSED") {
+		t.Fatalf("pre-record failure error = %#v", status[0]["lastError"])
+	}
+}
+
 func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 	source := paneSourceMap()
 	delete(source, "shell")

@@ -45,15 +45,19 @@ type Sessions struct {
 	links      Links
 	binder     paneBinder
 
-	mu    sync.Mutex
-	panes map[string]*paneRecord
-	locks map[string]*sync.Mutex
+	mu     sync.Mutex
+	panes  map[string]*paneRecord
+	failed map[string]*paneRecord
+	locks  map[string]*sync.Mutex
 }
 
 // NewSessions holds the installation identifier every surface.open carries —
 // the sidecar derives the channel name from it and looks the channel up.
 func NewSessions(identifier string, links Links) *Sessions {
-	return &Sessions{identifier: identifier, links: links, panes: make(map[string]*paneRecord), locks: make(map[string]*sync.Mutex)}
+	return &Sessions{
+		identifier: identifier, links: links, panes: make(map[string]*paneRecord),
+		failed: make(map[string]*paneRecord), locks: make(map[string]*sync.Mutex),
+	}
 }
 
 func (sessions *Sessions) lockPane(pane string) func() {
@@ -152,15 +156,20 @@ const placeholderCols, placeholderRows = 80, 24
 func (sessions *Sessions) Start(source map[string]string, generation uint64) error {
 	parsed, err := parseSource(source)
 	if err != nil {
+		sessions.recordPreStartFailure(source["window"], source["pane"], generation, err)
 		return err
 	}
 	// The engine discovers the PTY endpoint from the exact binding injected at process start.
 	// Start the dependency first so its token and endpoint exist before the engine reads them.
 	if err := sessions.links.start(parsed.ptyUnit); err != nil {
-		return fmt.Errorf("start terminal pty %s: %w", parsed.ptyUnit, err)
+		err = fmt.Errorf("start terminal pty %s: %w", parsed.ptyUnit, err)
+		sessions.recordPreStartFailure(parsed.window, parsed.pane, generation, err)
+		return err
 	}
 	if err := sessions.links.start(parsed.engineUnit); err != nil {
-		return fmt.Errorf("start terminal engine %s: %w", parsed.engineUnit, err)
+		err = fmt.Errorf("start terminal engine %s: %w", parsed.engineUnit, err)
+		sessions.recordPreStartFailure(parsed.window, parsed.pane, generation, err)
+		return err
 	}
 	unlock := sessions.lockPane(parsed.pane)
 	defer unlock()
@@ -176,6 +185,7 @@ func (sessions *Sessions) Start(source map[string]string, generation uint64) err
 		return nil
 	}
 	sessions.panes[parsed.pane] = record
+	delete(sessions.failed, parsed.pane)
 	sessions.mu.Unlock()
 
 	warm := sessions.rehydrate(parsed)
@@ -260,20 +270,45 @@ func (sessions *Sessions) block(record *paneRecord, err error) {
 	sessions.mu.Unlock()
 }
 
+func (sessions *Sessions) recordPreStartFailure(window, pane string, generation uint64, err error) {
+	if pane == "" {
+		return
+	}
+	sessions.mu.Lock()
+	defer sessions.mu.Unlock()
+	if held := sessions.panes[pane]; held != nil && held.generation > generation {
+		return
+	}
+	if held := sessions.failed[pane]; held != nil && held.generation > generation {
+		return
+	}
+	sessions.failed[pane] = &paneRecord{
+		pane: pane, window: window, generation: generation, phase: "blocked", lastError: err.Error(),
+	}
+}
+
 // Status exposes every declaration generation the service currently owns, including a failed
 // generation. A failed Start is not erased into "pane is not running"; the next higher generation
 // may replace it, while operators can read the exact failed boundary in the meantime.
 func (sessions *Sessions) Status() []map[string]any {
 	sessions.mu.Lock()
 	defer sessions.mu.Unlock()
-	panes := make([]string, 0, len(sessions.panes))
+	panes := make([]string, 0, len(sessions.panes)+len(sessions.failed))
 	for pane := range sessions.panes {
 		panes = append(panes, pane)
+	}
+	for pane := range sessions.failed {
+		if sessions.panes[pane] == nil {
+			panes = append(panes, pane)
+		}
 	}
 	sort.Strings(panes)
 	status := make([]map[string]any, 0, len(panes))
 	for _, pane := range panes {
 		record := sessions.panes[pane]
+		if record == nil {
+			record = sessions.failed[pane]
+		}
 		status = append(status, map[string]any{
 			"pane": record.pane, "window": record.window, "generation": record.generation,
 			"phase": record.phase, "session": record.session, "cols": record.cols, "rows": record.rows,
