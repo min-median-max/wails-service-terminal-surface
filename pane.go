@@ -660,12 +660,14 @@ func (sessions *Sessions) Resize(pane string, pixelW, pixelH, scale float64) err
 	return nil
 }
 
-func (sessions *Sessions) NoteFrame(pane string, seq uint64) {
+func (sessions *Sessions) NoteFrame(pane string, seq uint64) (uint64, bool) {
 	sessions.mu.Lock()
 	defer sessions.mu.Unlock()
 	if record, held := sessions.panes[pane]; held {
 		record.seq = seq
+		return record.generation, true
 	}
+	return 0, false
 }
 
 // State combines the engine's declared surface state with the session and channel state this
