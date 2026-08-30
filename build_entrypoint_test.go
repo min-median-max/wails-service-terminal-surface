@@ -12,7 +12,7 @@ func TestMakeOwnsTerminalSurfaceCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(body)
-	for _, target := range []string{"preflight:", "prepare:", "build:", "verify:"} {
+	for _, target := range []string{"preflight:", "lock:", "prepare:", "build:", "verify:"} {
 		if !strings.Contains(source, target) {
 			t.Errorf("Makefile omits %s", target)
 		}
