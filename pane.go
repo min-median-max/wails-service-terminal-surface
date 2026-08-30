@@ -34,6 +34,7 @@ type paneRecord struct {
 	session      uint64
 	cols, rows   uint64
 	phase        string
+	lastError    string
 	seq          uint64
 	token        string
 }
@@ -180,12 +181,12 @@ func (sessions *Sessions) Start(source map[string]string, generation uint64) err
 	warm := sessions.rehydrate(parsed)
 	if !warm {
 		if err := sessions.freshObserver(parsed); err != nil {
-			sessions.drop(parsed.pane, generation)
+			sessions.block(record, err)
 			return err
 		}
 	}
 	if err := sessions.openAndRender(parsed, record, warm); err != nil {
-		sessions.drop(parsed.pane, generation)
+		sessions.block(record, err)
 		return err
 	}
 	return nil
@@ -232,21 +233,54 @@ func (sessions *Sessions) restartPane(pane, unit string) error {
 	warm := sessions.rehydrate(parsed)
 	if !warm {
 		if err := sessions.freshObserver(parsed); err != nil {
-			sessions.markRestartFailed(record)
+			sessions.markRestartFailed(record, err)
 			return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
 		}
 	}
 	if err := sessions.openAndRender(parsed, record, warm); err != nil {
-		sessions.markRestartFailed(record)
+		sessions.markRestartFailed(record, err)
 		return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
 	}
 	return nil
 }
 
-func (sessions *Sessions) markRestartFailed(record *paneRecord) {
+func (sessions *Sessions) markRestartFailed(record *paneRecord, err error) {
 	sessions.mu.Lock()
 	record.phase = "blocked"
+	record.lastError = err.Error()
 	sessions.mu.Unlock()
+}
+
+func (sessions *Sessions) block(record *paneRecord, err error) {
+	sessions.mu.Lock()
+	if held := sessions.panes[record.pane]; held == record {
+		record.phase = "blocked"
+		record.lastError = err.Error()
+	}
+	sessions.mu.Unlock()
+}
+
+// Status exposes every declaration generation the service currently owns, including a failed
+// generation. A failed Start is not erased into "pane is not running"; the next higher generation
+// may replace it, while operators can read the exact failed boundary in the meantime.
+func (sessions *Sessions) Status() []map[string]any {
+	sessions.mu.Lock()
+	defer sessions.mu.Unlock()
+	panes := make([]string, 0, len(sessions.panes))
+	for pane := range sessions.panes {
+		panes = append(panes, pane)
+	}
+	sort.Strings(panes)
+	status := make([]map[string]any, 0, len(panes))
+	for _, pane := range panes {
+		record := sessions.panes[pane]
+		status = append(status, map[string]any{
+			"pane": record.pane, "window": record.window, "generation": record.generation,
+			"phase": record.phase, "session": record.session, "cols": record.cols, "rows": record.rows,
+			"sequence": record.seq, "lastError": record.lastError,
+		})
+	}
+	return status
 }
 
 // rehydrate asks the engine for its held mirror; any refusal means fresh.
@@ -348,6 +382,7 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	sessions.mu.Lock()
 	record.cols, record.rows = cols, rows
 	record.phase = "live"
+	record.lastError = ""
 	sessions.mu.Unlock()
 	return nil
 }

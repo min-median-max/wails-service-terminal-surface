@@ -445,6 +445,23 @@ func TestStateMergesTheDeclaredEngineSurfaceState(t *testing.T) {
 	}
 }
 
+func TestFailedGenerationRemainsObservableByStatus(t *testing.T) {
+	links := newFakeLinks()
+	links.refuse = map[string]string{"surface.open": "OPEN_FAILED: replacement surface refused"}
+	sessions := NewSessions("install-1", links.asLinks())
+	err := sessions.Start(paneSourceMap(), 7)
+	if err == nil {
+		t.Fatal("failed surface generation was accepted")
+	}
+	status := sessions.Status()
+	if len(status) != 1 || status[0]["pane"] != "tab-abc123.1" || status[0]["generation"] != uint64(7) || status[0]["phase"] != "blocked" {
+		t.Fatalf("failed generation status = %#v", status)
+	}
+	if message, _ := status[0]["lastError"].(string); !strings.Contains(message, "OPEN_FAILED") {
+		t.Fatalf("failed generation error = %#v", status[0]["lastError"])
+	}
+}
+
 func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 	source := paneSourceMap()
 	delete(source, "shell")
