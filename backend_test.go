@@ -12,12 +12,16 @@ import (
 // The driver is recorded, not run: these tests hold the inventory half of the backend, and the
 // AppKit half is a darwin file behind the same interface.
 type recordingDriver struct {
-	batches [][]nativeOperation
-	pixels  []byte
-	focused int
+	batches     [][]nativeOperation
+	pixels      []byte
+	focused     int
+	beforeApply func([]nativeOperation)
 }
 
 func (driver *recordingDriver) apply(_ unsafe.Pointer, operations []nativeOperation) ([]nativeResult, error) {
+	if driver.beforeApply != nil {
+		driver.beforeApply(operations)
+	}
 	driver.batches = append(driver.batches, append([]nativeOperation(nil), operations...))
 	results := make([]nativeResult, 0, len(operations))
 	for _, operation := range operations {
@@ -233,6 +237,25 @@ func TestApplyBindsThePaneViewToTheChannel(t *testing.T) {
 	}
 	if len(channel.unbinds) != 1 || channel.unbinds[0] != "tab-abc123.1" {
 		t.Fatalf("the removed pane did not unbind: %v", channel.unbinds)
+	}
+}
+
+func TestApplyUnbindsAViewBeforeTheNativeDriverReleasesIt(t *testing.T) {
+	driver := &recordingDriver{}
+	backend := newBackend(driver)
+	channel := &recordingChannel{}
+	backend.UseChannel(channel)
+	window := unsafe.Pointer(new(byte))
+	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("s1", 7))); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	driver.beforeApply = func(operations []nativeOperation) {
+		if len(operations) == 1 && operations[0].action == nativeRemove && len(channel.unbinds) == 0 {
+			t.Fatal("native release ran before the channel detached its borrowed view")
+		}
+	}
+	if _, err := backend.Apply(window, snapshotOf(2)); err != nil {
+		t.Fatalf("remove: %v", err)
 	}
 }
 

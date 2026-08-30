@@ -112,6 +112,18 @@ func (backend *Backend) ObservePanes(observe func(
 func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapshot) ([]compositor.AppliedSurface, error) {
 	operations := planBatch(backend.owners, window, snapshot)
 	if len(operations) > 0 {
+		// The channel borrows each native view pointer. Detach every pointer while it is still
+		// retained by the backend, before the driver transfers and releases native ownership.
+		// An in-flight frame takes its own short lease; a later frame observes no bound view.
+		if backend.channel != nil {
+			for _, operation := range operations {
+				if operation.action == nativeRemove {
+					if pane := operation.surface.Source["pane"]; pane != "" {
+						backend.channel.UnbindView(pane)
+					}
+				}
+			}
+		}
 		results, err := backend.driver.apply(window, operations)
 		if err != nil {
 			return nil, err
@@ -163,9 +175,6 @@ func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapsho
 					)
 				}
 			case nativeRemove:
-				if backend.channel != nil {
-					backend.channel.UnbindView(pane)
-				}
 				if backend.onPane != nil {
 					backend.onPane(
 						false, operation.lifecycleGeneration, operation.surface.Generation, operation.surface.Source,

@@ -36,7 +36,10 @@ void soksakChannelDeallocate(uint32_t port);
 // The IOSurface behind a received right. The right is deallocated either way;
 // a non-NULL result is a retained reference for soksakChannelReleaseSurface.
 void *soksakChannelLookupSurface(uint32_t port);
+void *soksakChannelRetainSurface(void *surface);
 void soksakChannelReleaseSurface(void *surface);
+void *soksakChannelRetainView(void *view);
+void soksakChannelReleaseView(void *view);
 
 // The displayed surface becomes the host view's layer contents, on the main
 // thread, inside one transaction (P7, P8).

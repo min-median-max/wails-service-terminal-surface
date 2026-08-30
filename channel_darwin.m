@@ -163,6 +163,26 @@ void soksakChannelReleaseSurface(void *surface) {
     }
 }
 
+void *soksakChannelRetainSurface(void *surface) {
+    if (surface != NULL) {
+        CFRetain((IOSurfaceRef)surface);
+    }
+    return surface;
+}
+
+void *soksakChannelRetainView(void *view) {
+    if (view == NULL) {
+        return NULL;
+    }
+    return (__bridge_retained void *)(__bridge NSView *)view;
+}
+
+void soksakChannelReleaseView(void *view) {
+    if (view != NULL) {
+        (void)CFBridgingRelease(view);
+    }
+}
+
 int soksakChannelDisplay(void *view, void *surface) {
     if (view == NULL) {
         return soksakChannelStatusNoView;

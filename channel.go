@@ -55,6 +55,40 @@ type Channel struct {
 	OnRefused func(name string)
 }
 
+type displayLease struct{ apply func() }
+
+func (lease displayLease) show() {
+	if lease.apply != nil {
+		lease.apply()
+	}
+}
+
+// holdDisplay acquires both borrowed native objects while channel.mu still proves they are bound.
+// Tests replace this function to assert the lock boundary without dereferencing native pointers.
+var holdDisplay = nativeDisplayLease
+
+func nativeDisplayLease(view, surface unsafe.Pointer) displayLease {
+	if view == nil || surface == nil {
+		return displayLease{}
+	}
+	heldView := C.soksakChannelRetainView(view)
+	heldSurface := C.soksakChannelRetainSurface(surface)
+	if heldView == nil || heldSurface == nil {
+		if heldView != nil {
+			C.soksakChannelReleaseView(heldView)
+		}
+		if heldSurface != nil {
+			C.soksakChannelReleaseSurface(heldSurface)
+		}
+		return displayLease{}
+	}
+	return displayLease{apply: func() {
+		defer C.soksakChannelReleaseView(heldView)
+		defer C.soksakChannelReleaseSurface(heldSurface)
+		C.soksakChannelDisplay(heldView, heldSurface)
+	}}
+}
+
 var channelRegistry = struct {
 	sync.Mutex
 	byID map[uint64]*Channel
@@ -107,14 +141,12 @@ func (channel *Channel) BindView(pane string, view unsafe.Pointer) {
 	channel.mu.Lock()
 	ring := channel.ring(pane)
 	ring.view = view
-	var display unsafe.Pointer
+	var display displayLease
 	if view != nil && ring.held && ring.displayed >= 0 {
-		display = ring.surfaces[ring.displayed]
+		display = holdDisplay(view, ring.surfaces[ring.displayed])
 	}
 	channel.mu.Unlock()
-	if display != nil {
-		C.soksakChannelDisplay(view, display)
-	}
+	display.show()
 }
 
 // UnbindView detaches the host view; the ring and its surfaces stay the
@@ -265,7 +297,7 @@ func (channel *Channel) consume(message surfacecontract.Message, rights []C.uint
 		wire []byte
 	}
 	var sends []send
-	var view, display unsafe.Pointer
+	var display displayLease
 	var frame func()
 
 	channel.mu.Lock()
@@ -322,8 +354,7 @@ func (channel *Channel) consume(message surfacecontract.Message, rights []C.uint
 		previous := ring.displayed
 		ring.displayed = int(m.RingIndex)
 		ring.seq = m.Seq
-		view = ring.view
-		display = ring.surfaces[ring.displayed]
+		display = holdDisplay(ring.view, ring.surfaces[ring.displayed])
 		if previous >= 0 && previous != ring.displayed {
 			if reply, connected := channel.replies[ring.sidecar]; connected {
 				wire, err := surfacecontract.Encode(&surfacecontract.Released{Pane: m.Pane, RingIndex: byte(previous)})
@@ -364,9 +395,7 @@ func (channel *Channel) consume(message surfacecontract.Message, rights []C.uint
 	for _, out := range sends {
 		C.soksakChannelSend(out.to, unsafe.Pointer(&out.wire[0]), C.size_t(len(out.wire)))
 	}
-	if view != nil && display != nil {
-		C.soksakChannelDisplay(view, display)
-	}
+	display.show()
 	if frame != nil {
 		frame()
 	}

@@ -10,9 +10,49 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	surfacecontract "github.com/soksak-ai/soksak-contract-surface"
 )
+
+func TestFrameDisplayLeasesViewAndSurfaceAcrossTheUnlock(t *testing.T) {
+	original := holdDisplay
+	defer func() { holdDisplay = original }()
+	channel := &Channel{
+		panes: make(map[string]*paneRing),
+	}
+	view := unsafe.Pointer(new(byte))
+	surface := unsafe.Pointer(new(byte))
+	channel.panes["tab-lease.1"] = &paneRing{
+		view: view, held: true, displayed: -1,
+		surfaces: [surfacecontract.RingSize]unsafe.Pointer{surface},
+	}
+	acquired, shown := false, false
+	holdDisplay = func(gotView, gotSurface unsafe.Pointer) displayLease {
+		if gotView != view || gotSurface != surface {
+			t.Fatalf("lease got view=%p surface=%p", gotView, gotSurface)
+		}
+		if channel.mu.TryLock() {
+			channel.mu.Unlock()
+			t.Fatal("display objects were leased after releasing channel ownership")
+		}
+		acquired = true
+		return displayLease{apply: func() {
+			if !channel.mu.TryLock() {
+				t.Fatal("display ran while holding the channel lock")
+			}
+			channel.mu.Unlock()
+			shown = true
+		}}
+	}
+
+	channel.consume(&surfacecontract.FrameReady{
+		Pane: "tab-lease.1", RingIndex: 0, Seq: 1,
+	}, nil)
+	if !acquired || !shown {
+		t.Fatalf("display lease acquired=%v shown=%v", acquired, shown)
+	}
+}
 
 // The committed wire fixtures decode here and re-encode to the same bytes: the
 // application consumes exactly what the contract wrote down.
