@@ -150,7 +150,10 @@ func sessionVariables(pane string) map[string]any {
 	return variables
 }
 
-const placeholderCols, placeholderRows = 80, 24
+type measuredGrid struct {
+	cols, rows   uint64
+	cellW, cellH float64
+}
 
 // Start opens one pane: warm when the engine still holds its mirror, fresh
 // otherwise. The pty write and resize stay this service's alone.
@@ -190,13 +193,18 @@ func (sessions *Sessions) Start(source map[string]string, generation, declaratio
 	sessions.mu.Unlock()
 
 	warm := sessions.rehydrate(parsed)
+	grid, err := sessions.measure(parsed)
+	if err != nil {
+		sessions.block(record, err)
+		return err
+	}
 	if !warm {
-		if err := sessions.freshObserver(parsed); err != nil {
+		if err := sessions.freshObserver(parsed, grid); err != nil {
 			sessions.block(record, err)
 			return err
 		}
 	}
-	if err := sessions.openAndRender(parsed, record, warm); err != nil {
+	if err := sessions.openAndRender(parsed, record, warm, grid); err != nil {
 		sessions.block(record, err)
 		return err
 	}
@@ -242,13 +250,18 @@ func (sessions *Sessions) restartPane(pane, unit string) error {
 	sessions.mu.Unlock()
 
 	warm := sessions.rehydrate(parsed)
+	grid, err := sessions.measure(parsed)
+	if err != nil {
+		sessions.markRestartFailed(record, err)
+		return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
+	}
 	if !warm {
-		if err := sessions.freshObserver(parsed); err != nil {
+		if err := sessions.freshObserver(parsed, grid); err != nil {
 			sessions.markRestartFailed(record, err)
 			return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
 		}
 	}
-	if err := sessions.openAndRender(parsed, record, warm); err != nil {
+	if err := sessions.openAndRender(parsed, record, warm, grid); err != nil {
 		sessions.markRestartFailed(record, err)
 		return fmt.Errorf("restart %s after %s replacement: %w", pane, unit, err)
 	}
@@ -339,10 +352,27 @@ func (sessions *Sessions) rehydrate(parsed paneSource) bool {
 
 // freshObserver prepares the engine's observer and hands its token to the pty,
 // so the engine sees every byte from the first one (no gap on day one).
-func (sessions *Sessions) freshObserver(parsed paneSource) error {
+func (sessions *Sessions) measure(parsed paneSource) (measuredGrid, error) {
+	answer, err := sessions.links.send(parsed.engineUnit, "surface.measure", map[string]any{
+		"pixelW": parsed.pixelW, "pixelH": parsed.pixelH, "scale": parsed.scale,
+		"font": map[string]any{"family": parsed.fontFamily, "pt": parsed.fontPt},
+	})
+	if err != nil {
+		return measuredGrid{}, err
+	}
+	measured, err := surfacecontract.ValidateMeasureResult(answer)
+	if err != nil {
+		return measuredGrid{}, fmt.Errorf("surface.measure returned an invalid grid for %s: %w", parsed.pane, err)
+	}
+	return measuredGrid{
+		cols: measured.Cols, rows: measured.Rows, cellW: measured.CellW, cellH: measured.CellH,
+	}, nil
+}
+
+func (sessions *Sessions) freshObserver(parsed paneSource, grid measuredGrid) error {
 	prepared, err := sessions.links.send(parsed.engineUnit, "terminal.prepareSession", map[string]any{
 		"window": parsed.window, "pane": parsed.pane,
-		"cols": placeholderCols, "rows": placeholderRows,
+		"cols": grid.cols, "rows": grid.rows,
 	})
 	if err != nil {
 		return err
@@ -360,9 +390,11 @@ func (sessions *Sessions) freshObserver(parsed paneSource) error {
 	return nil
 }
 
-func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, warm bool) error {
+func (sessions *Sessions) openAndRender(
+	parsed paneSource, record *paneRecord, warm bool, grid measuredGrid,
+) error {
 	open := map[string]any{
-		"paneId": parsed.pane, "cols": placeholderCols, "rows": placeholderRows,
+		"paneId": parsed.pane, "cols": grid.cols, "rows": grid.rows,
 		"shell": parsed.shell, "windowLabel": parsed.window,
 		"env": sessionVariables(parsed.pane),
 	}
@@ -387,13 +419,21 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	record.session = session
 	record.phase = "opened"
 	sessions.mu.Unlock()
+	created, _ := opened["created"].(bool)
+	if !created {
+		if _, err := sessions.links.send(parsed.ptyUnit, "pty.resize", map[string]any{
+			"session": session, "cols": grid.cols, "rows": grid.rows,
+		}); err != nil {
+			return err
+		}
+	}
 
 	// ensure follows the open: the engine's subscribe waits for the OPENED
 	// frame, and that frame exists only once the pty opened the session.
 	if !warm && token != "" {
 		if _, err := sessions.links.send(parsed.engineUnit, "terminal.ensureSession", map[string]any{
 			"window": parsed.window, "pane": parsed.pane,
-			"cols": placeholderCols, "rows": placeholderRows, "observerToken": token,
+			"cols": grid.cols, "rows": grid.rows, "observerToken": token,
 		}); err != nil {
 			return err
 		}
@@ -420,10 +460,11 @@ func (sessions *Sessions) openAndRender(parsed paneSource, record *paneRecord, w
 	if !okCols || !okRows || cols == 0 || rows == 0 {
 		return fmt.Errorf("surface.open answered no grid for %s", parsed.pane)
 	}
-	if _, err := sessions.links.send(parsed.ptyUnit, "pty.resize", map[string]any{
-		"session": session, "cols": cols, "rows": rows,
-	}); err != nil {
-		return err
+	if cols != grid.cols || rows != grid.rows {
+		return fmt.Errorf(
+			"surface.open grid %dx%d contradicts measured grid %dx%d for %s",
+			cols, rows, grid.cols, grid.rows, parsed.pane,
+		)
 	}
 	sessions.mu.Lock()
 	record.cols, record.rows = cols, rows

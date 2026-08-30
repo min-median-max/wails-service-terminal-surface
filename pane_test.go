@@ -30,8 +30,9 @@ func (links *fakeLinks) start(unit string) error {
 func newFakeLinks() *fakeLinks {
 	return &fakeLinks{
 		answers: map[string]map[string]any{
+			"surface.measure":         {"cols": float64(100), "rows": float64(30), "cellW": 15.6, "cellH": 32.0},
 			"terminal.prepareSession": {"observerToken": "tok-1"},
-			"pty.open":                {"session": float64(7)},
+			"pty.open":                {"session": float64(7), "created": true},
 			"terminal.ensureSession":  {},
 			"surface.open":            {"cols": float64(100), "rows": float64(30), "cellW": 15.6, "cellH": 32.0},
 			"pty.resize":              {},
@@ -87,9 +88,9 @@ func equalSequence(t *testing.T, got, want []string) {
 	}
 }
 
-// A cold pane prepares the engine's observer, opens the shell with that token,
-// subscribes the engine, opens the surface with the installation identifier,
-// and resizes the pty to the grid the sidecar answered.
+// A cold pane measures before it prepares an observer or starts a shell. Every
+// process-facing request carries that one measured grid, so no initial resize
+// can race the shell's first prompt.
 func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 	links := newFakeLinks()
 	links.refuse = map[string]string{"terminal.rehydrate": "NOT_FOUND: nothing held"}
@@ -103,13 +104,13 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 	})
 	equalSequence(t, links.sequence(), []string{
 		"soksak-sidecar-terminal-alacritty:terminal.rehydrate",
+		"soksak-sidecar-terminal-alacritty:surface.measure",
 		"soksak-sidecar-terminal-alacritty:terminal.prepareSession",
 		"soksak-sidecar-pty:pty.open",
 		"soksak-sidecar-terminal-alacritty:terminal.ensureSession",
 		"soksak-sidecar-terminal-alacritty:surface.open",
-		"soksak-sidecar-pty:pty.resize",
 	})
-	open := links.calls[2].request
+	open := links.calls[3].request
 	if open["observerToken"] != "tok-1" {
 		t.Fatalf("pty.open carries no observer token: %v", open)
 	}
@@ -120,13 +121,15 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 	if environment["SOKSAK_CALLER_PANE"] != "tab-abc123.1" || environment["SOKSAK_CALLER_TAB"] != "tab-abc123" {
 		t.Fatalf("session variables are wrong: %v", environment)
 	}
-	surface := links.calls[4].request
+	for _, index := range []int{2, 3, 4} {
+		request := links.calls[index].request
+		if request["cols"] != uint64(100) || request["rows"] != uint64(30) {
+			t.Fatalf("%s did not receive the measured initial grid: %v", links.calls[index].command, request)
+		}
+	}
+	surface := links.calls[5].request
 	if surface["identifier"] != "install-1" {
 		t.Fatalf("surface.open carries no installation identifier: %v", surface)
-	}
-	resize := links.calls[5].request
-	if resize["cols"] != uint64(100) || resize["rows"] != uint64(30) {
-		t.Fatalf("pty.resize does not follow the sidecar's grid: %v", resize)
 	}
 }
 
@@ -134,15 +137,17 @@ func TestFreshStartRunsTheOpeningOrder(t *testing.T) {
 // its displaying observer, so only the shell handle and the surface are needed.
 func TestWarmStartSkipsThePreparation(t *testing.T) {
 	links := newFakeLinks()
+	links.answers["pty.open"]["created"] = false
 	sessions := NewSessions("install-1", links.asLinks())
 	if err := sessions.Start(paneSourceMap(), 1, 1); err != nil {
 		t.Fatal(err)
 	}
 	equalSequence(t, links.sequence(), []string{
 		"soksak-sidecar-terminal-alacritty:terminal.rehydrate",
+		"soksak-sidecar-terminal-alacritty:surface.measure",
 		"soksak-sidecar-pty:pty.open",
-		"soksak-sidecar-terminal-alacritty:surface.open",
 		"soksak-sidecar-pty:pty.resize",
+		"soksak-sidecar-terminal-alacritty:surface.open",
 	})
 }
 
@@ -163,11 +168,11 @@ func TestEngineUnitRestartReopensEveryHeldPane(t *testing.T) {
 	}
 	equalSequence(t, links.sequence(), []string{
 		"soksak-sidecar-terminal-alacritty:terminal.rehydrate",
+		"soksak-sidecar-terminal-alacritty:surface.measure",
 		"soksak-sidecar-terminal-alacritty:terminal.prepareSession",
 		"soksak-sidecar-pty:pty.open",
 		"soksak-sidecar-terminal-alacritty:terminal.ensureSession",
 		"soksak-sidecar-terminal-alacritty:surface.open",
-		"soksak-sidecar-pty:pty.resize",
 	})
 	state, err := sessions.State("tab-abc123.1")
 	if err != nil {
