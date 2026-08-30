@@ -402,8 +402,8 @@ func TestObservePanesSeesCreateAndRemove(t *testing.T) {
 	driver := &recordingDriver{}
 	backend := newBackend(driver)
 	var events []string
-	backend.ObservePanes(func(created bool, generation uint64, source compositor.SurfaceSource) {
-		events = append(events, fmt.Sprintf("%s:%d:%s", source["pane"], generation, map[bool]string{true: "created", false: "removed"}[created]))
+	backend.ObservePanes(func(created bool, generation, declarationGeneration uint64, source compositor.SurfaceSource) {
+		events = append(events, fmt.Sprintf("%s:%d:%d:%s", source["pane"], generation, declarationGeneration, map[bool]string{true: "created", false: "removed"}[created]))
 	})
 	window := unsafe.Pointer(new(byte))
 	if _, err := backend.Apply(window, snapshotOf(1, paneSurface("terminal-1", 1))); err != nil {
@@ -415,7 +415,7 @@ func TestObservePanesSeesCreateAndRemove(t *testing.T) {
 	if _, err := backend.Apply(window, snapshotOf(3, paneSurface("terminal-1", 1))); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 3 || events[0] != "tab-abc123.1:1:created" || events[1] != "tab-abc123.1:1:removed" || events[2] != "tab-abc123.1:2:created" {
+	if len(events) != 3 || events[0] != "tab-abc123.1:1:1:created" || events[1] != "tab-abc123.1:1:1:removed" || events[2] != "tab-abc123.1:2:1:created" {
 		t.Fatalf("pane observation saw %v", events)
 	}
 }

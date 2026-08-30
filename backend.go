@@ -82,7 +82,7 @@ type Backend struct {
 	owners                  map[string]nativeOwner
 	channel                 paneChannel
 	verbs                   paneVerbs
-	onPane                  func(created bool, generation uint64, source compositor.SurfaceSource)
+	onPane                  func(created bool, lifecycleGeneration, declarationGeneration uint64, source compositor.SurfaceSource)
 	nextLifecycleGeneration uint64
 }
 
@@ -100,7 +100,9 @@ func (backend *Backend) UseSessions(verbs paneVerbs) { backend.verbs = verbs }
 // ObservePanes reports a pane's declaration appearing or going, with its
 // source. The host runs the session opening off this — never on this path,
 // which is the commit path.
-func (backend *Backend) ObservePanes(observe func(created bool, generation uint64, source compositor.SurfaceSource)) {
+func (backend *Backend) ObservePanes(observe func(
+	created bool, lifecycleGeneration, declarationGeneration uint64, source compositor.SurfaceSource,
+)) {
 	backend.onPane = observe
 }
 
@@ -155,14 +157,19 @@ func (backend *Backend) Apply(window unsafe.Pointer, snapshot compositor.Snapsho
 					}
 				}
 				if backend.onPane != nil {
-					backend.onPane(true, backend.owners[operation.surface.ID].lifecycleGeneration, operation.surface.Source)
+					backend.onPane(
+						true, backend.owners[operation.surface.ID].lifecycleGeneration,
+						operation.surface.Generation, operation.surface.Source,
+					)
 				}
 			case nativeRemove:
 				if backend.channel != nil {
 					backend.channel.UnbindView(pane)
 				}
 				if backend.onPane != nil {
-					backend.onPane(false, operation.lifecycleGeneration, operation.surface.Source)
+					backend.onPane(
+						false, operation.lifecycleGeneration, operation.surface.Generation, operation.surface.Source,
+					)
 				}
 			}
 		}

@@ -26,17 +26,18 @@ type paneBinder interface {
 
 // paneRecord is one pane the sessions hold.
 type paneRecord struct {
-	pane, window string
-	ptyUnit      string
-	engineUnit   string
-	source       paneSource
-	generation   uint64
-	session      uint64
-	cols, rows   uint64
-	phase        string
-	lastError    string
-	seq          uint64
-	token        string
+	pane, window          string
+	ptyUnit               string
+	engineUnit            string
+	source                paneSource
+	generation            uint64
+	declarationGeneration uint64
+	session               uint64
+	cols, rows            uint64
+	phase                 string
+	lastError             string
+	seq                   uint64
+	token                 string
 }
 
 // Sessions opens, steers and stops panes over the injected links.
@@ -153,22 +154,22 @@ const placeholderCols, placeholderRows = 80, 24
 
 // Start opens one pane: warm when the engine still holds its mirror, fresh
 // otherwise. The pty write and resize stay this service's alone.
-func (sessions *Sessions) Start(source map[string]string, generation uint64) error {
+func (sessions *Sessions) Start(source map[string]string, generation, declarationGeneration uint64) error {
 	parsed, err := parseSource(source)
 	if err != nil {
-		sessions.recordPreStartFailure(source["window"], source["pane"], generation, err)
+		sessions.recordPreStartFailure(source["window"], source["pane"], generation, declarationGeneration, err)
 		return err
 	}
 	// The engine discovers the PTY endpoint from the exact binding injected at process start.
 	// Start the dependency first so its token and endpoint exist before the engine reads them.
 	if err := sessions.links.start(parsed.ptyUnit); err != nil {
 		err = fmt.Errorf("start terminal pty %s: %w", parsed.ptyUnit, err)
-		sessions.recordPreStartFailure(parsed.window, parsed.pane, generation, err)
+		sessions.recordPreStartFailure(parsed.window, parsed.pane, generation, declarationGeneration, err)
 		return err
 	}
 	if err := sessions.links.start(parsed.engineUnit); err != nil {
 		err = fmt.Errorf("start terminal engine %s: %w", parsed.engineUnit, err)
-		sessions.recordPreStartFailure(parsed.window, parsed.pane, generation, err)
+		sessions.recordPreStartFailure(parsed.window, parsed.pane, generation, declarationGeneration, err)
 		return err
 	}
 	unlock := sessions.lockPane(parsed.pane)
@@ -177,7 +178,7 @@ func (sessions *Sessions) Start(source map[string]string, generation uint64) err
 		pane: parsed.pane, window: parsed.window,
 		ptyUnit: parsed.ptyUnit, engineUnit: parsed.engineUnit,
 		source:     parsed,
-		generation: generation, phase: "opening",
+		generation: generation, declarationGeneration: declarationGeneration, phase: "opening",
 	}
 	sessions.mu.Lock()
 	if held := sessions.panes[parsed.pane]; held != nil && held.generation >= generation {
@@ -270,7 +271,9 @@ func (sessions *Sessions) block(record *paneRecord, err error) {
 	sessions.mu.Unlock()
 }
 
-func (sessions *Sessions) recordPreStartFailure(window, pane string, generation uint64, err error) {
+func (sessions *Sessions) recordPreStartFailure(
+	window, pane string, generation, declarationGeneration uint64, err error,
+) {
 	if pane == "" {
 		return
 	}
@@ -283,7 +286,8 @@ func (sessions *Sessions) recordPreStartFailure(window, pane string, generation 
 		return
 	}
 	sessions.failed[pane] = &paneRecord{
-		pane: pane, window: window, generation: generation, phase: "blocked", lastError: err.Error(),
+		pane: pane, window: window, generation: generation, declarationGeneration: declarationGeneration,
+		phase: "blocked", lastError: err.Error(),
 	}
 }
 
@@ -310,12 +314,14 @@ func (sessions *Sessions) Status() []map[string]any {
 			record = sessions.failed[pane]
 		}
 		entry := map[string]any{
-			"pane": record.pane, "window": record.window, "generation": record.generation,
+			"pane": record.pane, "window": record.window,
+			"generation": record.declarationGeneration, "lifecycleGeneration": record.generation,
 			"phase": record.phase, "session": record.session, "cols": record.cols, "rows": record.rows,
 			"sequence": record.seq, "lastError": record.lastError,
 		}
 		if failed := sessions.failed[pane]; failed != nil && failed != record && failed.generation >= record.generation {
-			entry["failedGeneration"] = failed.generation
+			entry["failedGeneration"] = failed.declarationGeneration
+			entry["failedLifecycleGeneration"] = failed.generation
 			entry["startError"] = failed.lastError
 		}
 		status = append(status, entry)
@@ -670,7 +676,7 @@ func (sessions *Sessions) NoteFrame(pane string, seq uint64) (uint64, bool) {
 	defer sessions.mu.Unlock()
 	if record, held := sessions.panes[pane]; held {
 		record.seq = seq
-		return record.generation, true
+		return record.declarationGeneration, true
 	}
 	return 0, false
 }
@@ -684,7 +690,8 @@ func (sessions *Sessions) State(pane string) (map[string]any, error) {
 	}
 	sessions.mu.Lock()
 	window, engineUnit := record.window, record.engineUnit
-	phase, session, generation := record.phase, record.session, record.generation
+	phase, session := record.phase, record.session
+	generation, lifecycleGeneration := record.declarationGeneration, record.generation
 	cols, rows, sequence := record.cols, record.rows, record.seq
 	sessions.mu.Unlock()
 	state, err := sessions.links.send(engineUnit, "surface.state", map[string]any{
@@ -699,6 +706,7 @@ func (sessions *Sessions) State(pane string) (map[string]any, error) {
 	}
 	combined["phase"], combined["session"] = phase, session
 	combined["generation"] = generation
+	combined["lifecycleGeneration"] = lifecycleGeneration
 	combined["cols"], combined["rows"], combined["sequence"] = cols, rows, sequence
 	return combined, nil
 }
