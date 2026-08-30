@@ -309,11 +309,16 @@ func (sessions *Sessions) Status() []map[string]any {
 		if record == nil {
 			record = sessions.failed[pane]
 		}
-		status = append(status, map[string]any{
+		entry := map[string]any{
 			"pane": record.pane, "window": record.window, "generation": record.generation,
 			"phase": record.phase, "session": record.session, "cols": record.cols, "rows": record.rows,
 			"sequence": record.seq, "lastError": record.lastError,
-		})
+		}
+		if failed := sessions.failed[pane]; failed != nil && failed != record && failed.generation >= record.generation {
+			entry["failedGeneration"] = failed.generation
+			entry["startError"] = failed.lastError
+		}
+		status = append(status, entry)
 	}
 	return status
 }

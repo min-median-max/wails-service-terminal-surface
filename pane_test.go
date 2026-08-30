@@ -480,6 +480,21 @@ func TestDependencyStartFailureRemainsObservableBeforePaneRecordExists(t *testin
 	}
 }
 
+func TestNewerStartFailureIsReportedBesideTheStillLiveGeneration(t *testing.T) {
+	sessions := NewSessions("install-1", newFakeLinks().asLinks())
+	if err := sessions.Start(paneSourceMap(), 1); err != nil {
+		t.Fatal(err)
+	}
+	sessions.recordPreStartFailure("win-abc123", "tab-abc123.1", 2, refusal("START_REFUSED"))
+	status := sessions.Status()
+	if len(status) != 1 || status[0]["generation"] != uint64(1) || status[0]["phase"] != "live" || status[0]["failedGeneration"] != uint64(2) {
+		t.Fatalf("live generation with newer failure = %#v", status)
+	}
+	if message, _ := status[0]["startError"].(string); !strings.Contains(message, "START_REFUSED") {
+		t.Fatalf("newer start error = %#v", status[0]["startError"])
+	}
+}
+
 func TestASourceMissingItsShellIsRefusedByName(t *testing.T) {
 	source := paneSourceMap()
 	delete(source, "shell")
