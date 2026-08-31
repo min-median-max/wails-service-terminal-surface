@@ -50,6 +50,10 @@ forwards `surface.focus` to the recorded engine; focus loss forwards only the en
 The contract validates the engine/hollow-block presentation answer. This service does not inspect
 or replace engine cursor shape and blink state.
 
+Every changed geometry snapshot, including an interactive divider preview, places the terminal host
+at the declared frame and reports that same frame in the receipt. The service does not defer native
+placement until pointer release.
+
 ## Verification
 
 ```sh

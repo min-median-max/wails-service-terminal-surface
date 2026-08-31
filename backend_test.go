@@ -131,6 +131,31 @@ func TestEqualInventorySendsNoOperation(t *testing.T) {
 	}
 }
 
+func TestInteractiveGeometryPreviewMovesTheTerminalSurface(t *testing.T) {
+	driver := &recordingDriver{}
+	backend := newBackend(driver)
+	window := unsafe.Pointer(new(byte))
+	first := paneSurface("terminal-1", 1)
+	if _, err := backend.Apply(window, snapshotOf(1, first)); err != nil {
+		t.Fatal(err)
+	}
+	next := first
+	next.Frame = compositor.Frame{X: 40, Y: 20, Width: 640, Height: 600}
+	snapshot := snapshotOf(2, next)
+	snapshot.Interactive = true
+	applied, err := backend.Apply(window, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := driver.batches[len(driver.batches)-1]
+	if len(batch) != 1 || batch[0].action != nativeUpdate || batch[0].surface.Frame != next.Frame {
+		t.Fatalf("interactive preview did not place the terminal host at the declared frame: %+v", batch)
+	}
+	if len(applied) != 1 || applied[0].Frame != next.Frame {
+		t.Fatalf("interactive receipt did not report the placed terminal frame: %+v", applied)
+	}
+}
+
 func TestDeliverUnknownVerbIsRefusedByName(t *testing.T) {
 	driver := &recordingDriver{}
 	backend := newBackend(driver)
