@@ -534,8 +534,12 @@ func TestResizeAsksTheEngineThenResizesThePty(t *testing.T) {
 	links.answers["surface.resize"] = map[string]any{"cols": float64(120), "rows": float64(40)}
 	links.calls = nil
 
-	if err := sessions.Resize("tab-abc123.1", 960, 720, 2); err != nil {
+	grid, err := sessions.Resize("tab-abc123.1", 960, 720, 2)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if grid != (Grid{Cols: 120, Rows: 40}) {
+		t.Fatalf("resize result = %+v, want 120x40", grid)
 	}
 
 	sequence := links.sequence()

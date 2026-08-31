@@ -73,7 +73,7 @@ type paneVerbs interface {
 	Forward(pane, command string, request map[string]any) (map[string]any, error)
 	State(pane string) (map[string]any, error)
 	Stop(pane, intent string) error
-	Resize(pane string, pixelW, pixelH, scale float64) error
+	Resize(pane string, pixelW, pixelH, scale float64) (Grid, error)
 }
 
 // Backend is the terminal surface kind.
@@ -286,10 +286,11 @@ func (backend *Backend) Deliver(id string, message map[string]any) (map[string]a
 		if pixelW <= 0 || pixelH <= 0 || scale <= 0 {
 			return nil, fmt.Errorf("resize needs positive pixelW, pixelH and scale")
 		}
-		if err := backend.verbs.Resize(pane, pixelW, pixelH, scale); err != nil {
+		grid, err := backend.verbs.Resize(pane, pixelW, pixelH, scale)
+		if err != nil {
 			return nil, err
 		}
-		return map[string]any{}, nil
+		return map[string]any{"cols": grid.Cols, "rows": grid.Rows}, nil
 	case "stop":
 		intent, _ := message["intent"].(string)
 		if err := backend.verbs.Stop(pane, intent); err != nil {

@@ -684,32 +684,37 @@ func (sessions *Sessions) Forward(pane, command string, request map[string]any) 
 // Resize asks the pane's engine for the grid its new pixel box holds and
 // resizes the pty to the answer. The declaration moves the layer; this moves
 // the cells — a pane resized in pixels alone still wraps at the old columns.
-func (sessions *Sessions) Resize(pane string, pixelW, pixelH, scale float64) error {
+type Grid struct {
+	Cols uint64
+	Rows uint64
+}
+
+func (sessions *Sessions) Resize(pane string, pixelW, pixelH, scale float64) (Grid, error) {
 	record, err := sessions.record(pane)
 	if err != nil {
-		return err
+		return Grid{}, err
 	}
 	surface, err := sessions.links.send(record.engineUnit, "surface.resize", map[string]any{
 		"window": record.window, "pane": pane,
 		"pixelW": pixelW, "pixelH": pixelH, "scale": scale,
 	})
 	if err != nil {
-		return err
+		return Grid{}, err
 	}
 	cols, okCols := asUint(surface["cols"])
 	rows, okRows := asUint(surface["rows"])
 	if !okCols || !okRows {
-		return fmt.Errorf("surface.resize answered no grid for %s", pane)
+		return Grid{}, fmt.Errorf("surface.resize answered no grid for %s", pane)
 	}
 	if _, err := sessions.links.send(record.ptyUnit, "pty.resize", map[string]any{
 		"session": record.session, "cols": cols, "rows": rows,
 	}); err != nil {
-		return err
+		return Grid{}, err
 	}
 	sessions.mu.Lock()
 	record.cols, record.rows = cols, rows
 	sessions.mu.Unlock()
-	return nil
+	return Grid{Cols: cols, Rows: rows}, nil
 }
 
 func (sessions *Sessions) NoteFrame(pane string, seq uint64) (uint64, bool) {
